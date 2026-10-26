@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "green-zone",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+
+  // Static front end (public/) is served directly; only /api/* runs the Worker first.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Cloudflare D1: users, sessions, zone types, trips, painted segments, pins.
+  // Create it with `npx wrangler d1 create green-zone-db` and paste the id here.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "green-zone-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Cloudflare Email Service: sign-in codes, welcome email and trip summaries.
+  // The sender domain must be onboarded under Email Service > Email Sending.
+  "send_email": [{ "name": "EMAIL" }],
+
+  "vars": {
+    "APP_NAME": "Green Zone",
+    "EMAIL_FROM": "login@example.com",
+    "EMAIL_FROM_NAME": "Green Zone",
+    // Comma-separated emails that are always on the Pro plan (handy for the owner and testers).
+    "PRO_EMAILS": "",
+    // Must stay empty in production. Set DEV_MODE=1 in .dev.vars to show sign-in codes on screen locally.
+    "DEV_MODE": ""
+  }
+}

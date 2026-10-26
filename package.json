@@ -1,0 +1,21 @@
+{
+  "name": "green-zone",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Driving for dollars made easier: paint streets green, yellow or red as you drive.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply green-zone-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply green-zone-db --remote",
+    "types": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "vendor": "mkdir -p public/vendor/leaflet && cp node_modules/leaflet/dist/leaflet.js node_modules/leaflet/dist/leaflet.css node_modules/leaflet/LICENSE public/vendor/leaflet/ && cp -r node_modules/leaflet/dist/images public/vendor/leaflet/"
+  },
+  "devDependencies": {
+    "leaflet": "^1.9.4",
+    "typescript": "5.9.3",
+    "wrangler": "4.150.0"
+  }
+}

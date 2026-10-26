@@ -1,0 +1,4 @@
+# Copy to .dev.vars for local development only. Never set DEV_MODE in production.
+# With DEV_MODE=1 the sign-in code is returned by the API and shown on screen,
+# so you can log in locally without a real inbox.
+DEV_MODE=1

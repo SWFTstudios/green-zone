@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14532d">
+  <meta name="description" content="Driving for dollars made easier: paint streets green, yellow or red as you drive.">
+  <title>Green Zone</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="map" aria-label="Map"></div>
+
+  <header class="topbar" id="topbar" hidden>
+    <a class="brand" href="#/drive"><span class="brand-dot"></span>Green Zone</a>
+    <nav class="tabs" aria-label="Main">
+      <a href="#/drive" data-tab="drive">Drive</a>
+      <a href="#/trips" data-tab="trips">Trips</a>
+      <a href="#/map" data-tab="map">My map</a>
+      <a href="#/key" data-tab="key">Key</a>
+    </nav>
+    <button class="account" id="account-btn" type="button" aria-haspopup="true" aria-expanded="false">
+      <span class="plan-badge" id="plan-badge">Free</span>
+    </button>
+    <div class="account-menu" id="account-menu" hidden>
+      <div class="account-email" id="account-email"></div>
+      <button type="button" id="upgrade-btn">See Pro features</button>
+      <button type="button" id="logout-btn">Sign out</button>
+    </div>
+  </header>
+
+  <!-- Sign in -->
+  <section class="page page-center" id="view-login" hidden>
+    <div class="card login-card">
+      <div class="login-logo"><span class="stripe g"></span><span class="stripe y"></span><span class="stripe r"></span></div>
+      <h1>Green Zone</h1>
+      <p class="muted">Driving for dollars made easier. Paint each street green, yellow or red as you drive, then keep a map of where you want to invest.</p>
+      <form id="login-form" autocomplete="on">
+        <label for="login-email">Email</label>
+        <input id="login-email" name="email" type="email" inputmode="email" autocomplete="email" required placeholder="you@example.com">
+        <button class="btn btn-primary btn-block" type="submit">Email me a sign-in code</button>
+      </form>
+      <form id="code-form" hidden>
+        <p>We sent a 6-digit code to <b id="code-email"></b>.</p>
+        <label for="login-code">Sign-in code</label>
+        <input id="login-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" maxlength="7" required placeholder="123456">
+        <p class="dev-code" id="dev-code" hidden></p>
+        <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+        <button class="btn btn-link" type="button" id="code-back">Use a different email</button>
+      </form>
+      <p class="form-error" id="login-error" role="alert" hidden></p>
+    </div>
+  </section>
+
+  <!-- Drive -->
+  <section class="drive" id="view-drive" hidden>
+    <div class="hud" id="hud">
+      <div class="hud-status">
+        <span class="gps-dot" id="gps-dot"></span>
+        <span id="gps-text">Location off</span>
+      </div>
+      <div class="hud-stats" id="hud-stats"></div>
+      <div class="hud-clock" id="hud-clock"></div>
+    </div>
+    <div class="map-tools">
+      <button class="tool" type="button" id="follow-btn" title="Follow my location" aria-pressed="true">◎</button>
+      <button class="tool" type="button" id="draw-btn" title="Draw by tapping the map" aria-pressed="false">✎</button>
+    </div>
+    <div class="dock">
+      <p class="dock-hint" id="dock-hint">Tap a color to start painting the street you're on.</p>
+      <div class="zone-buttons" id="zone-buttons"></div>
+      <div class="dock-actions">
+        <button class="btn btn-ghost" type="button" id="pause-btn" disabled>Pause</button>
+        <button class="btn btn-ghost" type="button" id="note-btn" disabled>Add note</button>
+        <button class="btn btn-ghost" type="button" id="undo-btn" disabled>Undo</button>
+        <button class="btn btn-finish" type="button" id="finish-btn" disabled>Finish trip</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Trips list -->
+  <section class="page" id="view-trips" hidden>
+    <div class="page-inner">
+      <div class="page-head">
+        <h1>Trips</h1>
+        <a class="btn btn-primary" href="#/drive">New drive</a>
+      </div>
+      <div id="trips-list" class="trip-list"></div>
+    </div>
+  </section>
+
+  <!-- Trip detail / My map side panel -->
+  <section class="panel" id="view-panel" hidden>
+    <button class="panel-handle" type="button" id="panel-toggle" aria-expanded="true">
+      <span class="handle-bar"></span><span class="sr-only">Show or hide details</span>
+    </button>
+    <div class="panel-body" id="panel-body"></div>
+  </section>
+
+  <!-- Key (zone types) -->
+  <section class="page" id="view-key" hidden>
+    <div class="page-inner">
+      <div class="page-head">
+        <h1>Your key</h1>
+        <span class="plan-badge" id="key-plan"></span>
+      </div>
+      <p class="muted">The key explains what each color means. It's shown with every trip and in your trip summary emails.</p>
+      <p class="tip">Tip: describe what you can see, like property condition, vacant or boarded-up houses, traffic, and whether it feels safe to walk, rather than who lives there.</p>
+      <div id="zones-list" class="zones-list"></div>
+      <div id="zone-add"></div>
+    </div>
+  </section>
+
+  <!-- Modals -->
+  <dialog id="finish-dialog" class="dialog">
+    <form method="dialog" id="finish-form">
+      <h2>Finish trip</h2>
+      <p class="muted" id="finish-summary"></p>
+      <label for="finish-name">Trip name</label>
+      <input id="finish-name" maxlength="120" required>
+      <h3>Key for this trip</h3>
+      <p class="muted small">Each color keeps its usual meaning. Add what you saw on this drive.</p>
+      <div id="finish-legend" class="legend-edit"></div>
+      <label for="finish-notes">Notes</label>
+      <textarea id="finish-notes" rows="4" maxlength="10000" placeholder="Streets to come back to, owners to look up, anything you noticed…"></textarea>
+      <label class="check"><input type="checkbox" id="finish-email" checked> Email me a summary of this trip</label>
+      <p class="form-error" id="finish-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button class="btn btn-danger-ghost" type="button" id="finish-discard">Discard trip</button>
+        <span class="spacer"></span>
+        <button class="btn btn-ghost" type="button" id="finish-cancel">Keep driving</button>
+        <button class="btn btn-primary" type="submit" id="finish-save">Save trip</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="note-dialog" class="dialog">
+    <form method="dialog" id="note-form">
+      <h2>Add a note here</h2>
+      <p class="muted small" id="note-where"></p>
+      <textarea id="note-text" rows="3" maxlength="1000" required placeholder="e.g. Vacant house, overgrown yard, 412 Maple"></textarea>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button class="btn btn-ghost" type="button" id="note-cancel">Cancel</button>
+        <button class="btn btn-primary" type="submit">Drop note</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="upgrade-dialog" class="dialog">
+    <form method="dialog">
+      <h2>Green Zone Pro</h2>
+      <p>Free gives you Green, Yellow and Red for real estate. Pro lets you make the map fit any use case:</p>
+      <ul class="pro-list">
+        <li><span class="sw" style="background:#7c3aed"></span><b>Your own colors and zones</b>, like "Purple: a community we want to reach out to".</li>
+        <li><span class="sw" style="background:#0ea5e9"></span><b>Rename and recolor</b> Green, Yellow and Red.</li>
+        <li><span class="sw" style="background:#f97316"></span><b>Up to 24 zones</b> for canvassing, outreach, deliveries, scouting and more.</li>
+      </ul>
+      <p class="muted small" id="upgrade-status">Online checkout isn't switched on yet. To get Pro now, ask the app owner to add your email to the Pro list.</p>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button class="btn btn-primary" value="close">Got it</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
