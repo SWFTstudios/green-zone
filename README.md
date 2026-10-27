@@ -82,30 +82,26 @@ Phones only allow GPS on `https://` pages or `localhost`. To try it on a phone d
 
 ## Deploy to Cloudflare
 
-There are two Workers. Both D1 databases already exist, and their IDs are in `wrangler.jsonc`.
+Production is the `green-zone` Worker. Both D1 databases already exist, and their IDs are in `wrangler.jsonc`.
 
-| Worker | Deployed from | Database | Sign-in |
+| Target | How | Database | Sign-in |
 | --- | --- | --- | --- |
-| `green-zone` (production) | `main` | `green-zone-db` | Code sent by email |
-| `green-zone-preview` | Any other branch | `green-zone-preview-db` | Code shown on screen, no email sent |
+| Production (`green-zone`) | Push to `main` via **Workers Builds** | `green-zone-db` | Code sent by email |
+| Branch Previews | Push to any other branch via Workers Builds (`npx wrangler preview`) | `green-zone-preview-db` (see `previews` in `wrangler.jsonc`) | `DEV_MODE=1` shows the code on screen |
+| Persistent demo (`green-zone-preview`) | Manual `npx wrangler deploy --env preview` | `green-zone-preview-db` | Code shown on screen |
 
-The preview is a shareable demo. Anyone with the link can sign in as any address, so don't put real data in it.
+Workers Builds is the live pipeline (Cloudflare's Git integration). It does **not** run D1 migrations — apply those before the code that needs them is deployed:
 
-### Automatic deploys (GitHub Actions)
-
-`.github/workflows/deploy.yml` runs on every push. It applies database migrations, deploys, and adds the live link to the run summary and as a **View deployment** button on the pull request. To turn it on:
-
-1. Create a Cloudflare API token: **dash.cloudflare.com → My Profile → API Tokens → Create Token**. Start from the **Edit Cloudflare Workers** template and add **Account → D1 → Edit**.
-2. In GitHub, go to **Settings → Secrets and variables → Actions** and add a repository secret named `CLOUDFLARE_API_TOKEN`.
-3. If the token can reach more than one Cloudflare account, also add `CLOUDFLARE_ACCOUNT_ID`. It's shown on the Workers & Pages overview page in the dashboard.
-4. Re-run the latest **Deploy to Cloudflare** workflow, or push a commit.
+```bash
+npx wrangler d1 migrations apply green-zone-db --remote
+```
 
 ### Manual deploy
 
 ```bash
 npx wrangler login
 npx wrangler d1 migrations apply green-zone-preview-db --remote --env preview
-npx wrangler deploy --env preview        # preview
+npx wrangler deploy --env preview        # persistent preview Worker
 npm run db:migrate:remote && npm run deploy   # production
 ```
 
