@@ -23,6 +23,8 @@ ${bodyHtml}
 }
 
 async function send(env: Env, to: string, subject: string, html: string, text: string): Promise<void> {
+  // The preview environment deliberately has no email binding.
+  if (!env.EMAIL) throw new Error("No EMAIL binding is configured for this environment.");
   await env.EMAIL.send({
     from: { email: env.EMAIL_FROM, name: env.EMAIL_FROM_NAME || env.APP_NAME },
     to,
