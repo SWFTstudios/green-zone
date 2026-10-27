@@ -41,10 +41,31 @@
     "DEV_MODE": ""
   },
 
+  // Worker Previews (npx wrangler preview / PR builds). Uses the preview D1 database and
+  // DEV_MODE so sign-in codes show on screen; does not touch production data.
+  // Cron triggers are not applied to Previews.
+  "previews": {
+    "vars": {
+      "APP_NAME": "Green Zone (preview)",
+      "EMAIL_FROM": "login@greenzone.swftstudios.com",
+      "EMAIL_FROM_NAME": "Green Zone",
+      "PRO_EMAILS": "",
+      "DEV_MODE": "1"
+    },
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "green-zone-preview-db",
+        "database_id": "c2946a07-1a07-4ba6-96b7-ca875f582efd",
+        "migrations_dir": "migrations"
+      }
+    ],
+    "send_email": [{ "name": "EMAIL" }]
+  },
+
   "env": {
-    // Shareable demo at green-zone-preview.<your-subdomain>.workers.dev, deployed with `--env preview`.
-    // It has its own database and sends no email: the sign-in code is shown on screen instead,
-    // so anyone with the link can sign in as any address. Don't put real data in it.
+    // Persistent demo Worker at green-zone-preview.<subdomain>.workers.dev (`wrangler deploy --env preview`).
+    // Distinct from the `previews` block above (branch Worker Previews). Own D1; DEV_MODE shows codes.
     "preview": {
       "workers_dev": true,
       "triggers": { "crons": ["23 9 * * *"] },
