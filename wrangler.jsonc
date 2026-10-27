@@ -1,0 +1,64 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "green-zone",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "workers_dev": true,
+
+  // Static front end (public/) is served directly; only /api/* runs the Worker first.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Cloudflare D1: users, sessions, zone types, trips, painted segments, pins.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "green-zone-db",
+      "database_id": "5c7ca051-beca-4865-a1a9-f239748a0b8d",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Cloudflare Email Service: sign-in codes, welcome email and trip summaries.
+  // The sender domain must be onboarded under Email Service > Email Sending.
+  "send_email": [{ "name": "EMAIL" }],
+
+  "vars": {
+    "APP_NAME": "Green Zone",
+    "EMAIL_FROM": "login@example.com",
+    "EMAIL_FROM_NAME": "Green Zone",
+    // Comma-separated emails that are always on the Pro plan (handy for the owner and testers).
+    "PRO_EMAILS": "",
+    // Must stay empty in production. Set DEV_MODE=1 in .dev.vars to show sign-in codes on screen locally.
+    "DEV_MODE": ""
+  },
+
+  "env": {
+    // Shareable demo at green-zone-preview.<your-subdomain>.workers.dev, deployed with `--env preview`.
+    // It has its own database and sends no email: the sign-in code is shown on screen instead,
+    // so anyone with the link can sign in as any address. Don't put real data in it.
+    "preview": {
+      "workers_dev": true,
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "green-zone-preview-db",
+          "database_id": "c2946a07-1a07-4ba6-96b7-ca875f582efd",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "vars": {
+        "APP_NAME": "Green Zone (preview)",
+        "EMAIL_FROM": "login@example.com",
+        "EMAIL_FROM_NAME": "Green Zone",
+        "PRO_EMAILS": "",
+        "DEV_MODE": "1"
+      }
+    }
+  }
+}
