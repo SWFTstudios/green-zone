@@ -111,11 +111,16 @@ npm run db:migrate:remote && npm run deploy   # production
 
 ### Before production takes real users
 
-1. **Set up email sending.** In the Cloudflare dashboard, go to **Compute → Email Service → Email Sending → Onboard Domain** and pick your domain. The domain must use Cloudflare DNS. Sending to any address requires the Workers Paid plan.
-2. **Set the sender** in `wrangler.jsonc`, under the top-level `vars`:
-   - `EMAIL_FROM`, for example `login@yourdomain.com`. It must be on the onboarded domain.
-   - `EMAIL_FROM_NAME`, for example `Green Zone`.
-   - `PRO_EMAILS`, a comma-separated list of emails that always get Pro (optional).
+Email sign-in sends from `login@greenzone.swftstudios.com`. Guest mode works without any of this.
+
+1. **Onboard the sending subdomain.** In the Cloudflare dashboard, go to **Compute → Email Service → Email Sending → Onboard Domain** and choose the subdomain `greenzone.swftstudios.com`. You may need to type it, since it doesn't need a website. Cloudflare adds the bounce MX, SPF, DKIM and DMARC records on that subdomain only, so mail you send and receive as @swftstudios.com isn't affected. Onboarding the apex domain instead would add a strict `p=reject` DMARC record to swftstudios.com if it doesn't already have one.
+   - swftstudios.com has to use Cloudflare DNS in the same Cloudflare account as the Worker.
+   - Sending to any address requires the Workers Paid plan.
+   - New accounts start with a small daily sending quota that grows with good deliverability.
+2. **Check the sender** in `wrangler.jsonc`, under the top-level `vars`:
+   - `EMAIL_FROM` is `login@greenzone.swftstudios.com`. If you change the subdomain, change it here too.
+   - `EMAIL_FROM_NAME` is the display name, for example `Green Zone`.
+   - `PRO_EMAILS` is a comma-separated list of emails that always get Pro (optional).
    - Leave `DEV_MODE` empty. If it were set, sign-in codes would be shown to anyone.
 
 ### Area data setup

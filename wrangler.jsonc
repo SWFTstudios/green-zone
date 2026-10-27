@@ -28,12 +28,12 @@
   ],
 
   // Cloudflare Email Service: sign-in codes, welcome email and trip summaries.
-  // The sender domain must be onboarded under Email Service > Email Sending.
+  // The sender domain (greenzone.swftstudios.com) must be onboarded under Email Service > Email Sending.
   "send_email": [{ "name": "EMAIL" }],
 
   "vars": {
     "APP_NAME": "Green Zone",
-    "EMAIL_FROM": "login@example.com",
+    "EMAIL_FROM": "login@greenzone.swftstudios.com",
     "EMAIL_FROM_NAME": "Green Zone",
     // Comma-separated emails that are always on the Pro plan (handy for the owner and testers).
     "PRO_EMAILS": "",
