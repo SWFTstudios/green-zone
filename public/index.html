@@ -18,6 +18,7 @@
     <a class="brand" href="#/drive"><span class="brand-dot"></span>Green Zone</a>
     <nav class="tabs" aria-label="Main">
       <a href="#/drive" data-tab="drive">Drive</a>
+      <a href="#/explore" data-tab="explore">Explore</a>
       <a href="#/trips" data-tab="trips">Trips</a>
       <a href="#/map" data-tab="map">My map</a>
       <a href="#/key" data-tab="key">Key</a>
@@ -68,6 +69,7 @@
     <div class="map-tools">
       <button class="tool" type="button" id="follow-btn" title="Follow my location" aria-pressed="true">◎</button>
       <button class="tool" type="button" id="draw-btn" title="Draw by tapping the map" aria-pressed="false">✎</button>
+      <button class="tool" type="button" id="areas-btn" title="Show area scores from Explore" aria-pressed="false">▦</button>
     </div>
     <div class="dock">
       <p class="dock-hint" id="dock-hint">Tap a color to start painting the street you're on.</p>
@@ -163,6 +165,21 @@
       <div class="dialog-actions">
         <span class="spacer"></span>
         <button class="btn btn-primary" value="close">Got it</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="search-dialog" class="dialog">
+    <form method="dialog" id="search-form">
+      <h2 id="search-dialog-title">Save this search</h2>
+      <label for="search-name">Name</label>
+      <input id="search-name" maxlength="80" required placeholder="e.g. Cash-flow rentals, North Philly">
+      <p class="muted small">Saves your criteria, this map view and the current results, so you can come back to them.</p>
+      <p class="form-error" id="search-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button class="btn btn-ghost" type="button" id="search-cancel">Cancel</button>
+        <button class="btn btn-primary" type="submit">Save</button>
       </div>
     </form>
   </dialog>

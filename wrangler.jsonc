@@ -6,6 +6,9 @@
   "observability": { "enabled": true },
   "workers_dev": true,
 
+  // Daily: refresh any Zillow Research dataset older than ~a month (three per run).
+  "triggers": { "crons": ["23 9 * * *"] },
+
   // Static front end (public/) is served directly; only /api/* runs the Worker first.
   "assets": {
     "directory": "./public",
@@ -44,6 +47,7 @@
     // so anyone with the link can sign in as any address. Don't put real data in it.
     "preview": {
       "workers_dev": true,
+      "triggers": { "crons": ["23 9 * * *"] },
       "d1_databases": [
         {
           "binding": "DB",
