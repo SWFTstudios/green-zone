@@ -1,5 +1,5 @@
 // Keeps the app shell available when signal drops mid-drive. API calls always go to the network.
-const CACHE = "green-zone-v1";
+const CACHE = "green-zone-v2";
 const SHELL = [
   "/",
   "/index.html",
@@ -9,6 +9,8 @@ const SHELL = [
   "/manifest.webmanifest",
   "/vendor/leaflet/leaflet.js",
   "/vendor/leaflet/leaflet.css",
+  "/explore.js",
+  "/areas-core.js",
 ];
 
 self.addEventListener("install", (event) => {

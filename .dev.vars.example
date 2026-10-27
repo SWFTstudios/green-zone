@@ -2,3 +2,15 @@
 # With DEV_MODE=1 the sign-in code is returned by the API and shown on screen,
 # so you can log in locally without a real inbox.
 DEV_MODE=1
+
+# Enables POST /api/admin/zillow-import (Authorization: Bearer <token>).
+ADMIN_TOKEN=change-me
+
+# Optional: free key from https://api.census.gov/data/key_signup.html
+# CENSUS_API_KEY=
+
+# Uncomment to work offline against `node test/mock-data-server.mjs` (synthetic Philadelphia data).
+# TIGERWEB_URL=http://127.0.0.1:8790/tiger
+# CENSUS_API_URL=http://127.0.0.1:8790/census
+# OVERPASS_URL=http://127.0.0.1:8790/overpass
+# ZILLOW_BASE_URL=http://127.0.0.1:8790/zillow

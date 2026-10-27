@@ -22,15 +22,43 @@ Driving for dollars made easier. Drive a neighborhood, tap **Green**, **Yellow**
 - **My map** shows everything you've ever painted, with per-color mileage and filters.
 - **Key** lets you rewrite what Green, Yellow and Red mean to you.
 
+**Explore: area scores for investors**
+- The **Explore** tab colors every neighborhood (Census tract) on screen green, yellow or red based on **your** criteria, and recolors instantly as you change them.
+- Start from a preset (Balanced investor, Cash-flow rentals, Appreciation, Fix and flip, Active and well lit, Single-family neighborhoods), then add, remove or reweight criteria. Each criterion can be "higher is better", "lower is better" or "within a range", and can be marked **Must have**. Areas that miss a must-have are outlined or hidden.
+- Tap an area for its score breakdown and every number behind it.
+- **Saved searches**: name a search to keep its criteria, map view and a snapshot of the results, then reopen, update, rename or delete it later. Free accounts get 5, Pro gets 100.
+- Your own drives count: streets you painted feed a "Your drive ratings" criterion, from +100 (all green) to −100 (all red).
+- On the Drive screen, **▦** shows the same area colors faintly under your painting.
+
 **Pro (any use case)**
 - Add your own zones with any name and color, for example *Purple: a community we want to reach out to*. Up to 24 zones.
 - Rename and recolor Green, Yellow and Red.
 - If someone drops back to Free, their custom zones are locked for new drives, but old trips keep their colors.
 
+## Area data sources
+
+| What | Source | Level | Notes |
+| --- | --- | --- | --- |
+| Home values by type (all, single-family, condo, 1–5 bedrooms) and 12-month change | [Zillow Research](https://www.zillow.com/research/data/) ZHVI | ZIP code | Free with attribution. Imported monthly by a cron job. |
+| Asking rents and 12-month change | Zillow Research ZORI | ZIP code | Used with ZHVI for gross rent yield. |
+| Home value, rent, income, vacancy, owner/renter share, year built, unemployment, units-in-structure mix, population | [Census ACS 5-year](https://www.census.gov/data/developers/data-sets/acs-5year.html) | Tract | Housing and economic tables only. Nothing about race, ethnicity, religion, sex, family status or disability is fetched or scored. |
+| Tract and ZIP boundaries | [Census TIGERweb](https://tigerweb.geo.census.gov/) | Tract, ZCTA | Layers are looked up by name. |
+| Outdoor activity (parks, trails, fitness spots), street lighting (lit streets, street lamps), transit, grocery, schools, restaurants, healthcare, land use | [OpenStreetMap](https://www.openstreetmap.org/) via Overpass | Tract | Crowd-mapped, so coverage varies by city. |
+| Your drive ratings | Your own trips | Tract | Computed in the browser and visible only to you. |
+
+What isn't included, and why:
+- **Strava.** Strava's API terms (since November 2024) only allow showing an athlete's data to that athlete, and rule out aggregate heatmaps and analytics. "Where people work out outside" comes from OpenStreetMap parks, trails and fitness spots instead.
+- **Legal zoning.** There's no free nationwide zoning dataset. "Main land use" is what's mapped in OpenStreetMap, labeled as not legal zoning. A parcel and zoning provider such as Regrid could be added as another source.
+- **Crime.** There's no reliable, free, nationwide source at neighborhood level.
+- **Zillow listings.** Zillow doesn't allow scraping listings, so only the free Research datasets are used.
+
+How it runs: `POST /api/areas` takes the map view and returns tracts with metrics. Boundaries load in 0.1° tiles and metrics in batches of up to 30 nearby tracts, so the client polls until `pending` reaches 0. Results are cached in D1: tract metrics and Census responses for 30 days, and a retry after 15 minutes for any source that failed. Zillow values are joined from `zip_market` on every read, so a new monthly import shows up immediately.
+
 ## Tech
 
 - **Cloudflare Workers** runs the API (`src/`) and serves the front end (`public/`) as static assets.
-- **Cloudflare D1** stores users, sessions, sign-in codes, zones, trips, painted segments and note pins (`migrations/`).
+- **Cloudflare D1** stores users, sessions, sign-in codes, zones, trips, painted segments, note pins, saved searches and cached area data (`migrations/`).
+- A **cron trigger** refreshes Zillow data daily (`src/areas/zillow.ts`).
 - **Cloudflare Email Service** (`send_email` binding) sends sign-in codes, the welcome email and trip summaries.
 - The front end is plain JavaScript with [Leaflet](https://leafletjs.com/) (served from `public/vendor/`) and OpenStreetMap tiles. It has no build step and can be installed to a phone's home screen.
 
@@ -44,6 +72,8 @@ cp .dev.vars.example .dev.vars     # DEV_MODE=1 shows the sign-in code on screen
 npm run db:migrate:local
 npm run dev                        # http://localhost:8787
 ```
+
+To work on Explore offline, run `node test/mock-data-server.mjs` and uncomment the `*_URL` lines in `.dev.vars`. That serves a synthetic grid of Philadelphia tracts with made-up Census, OpenStreetMap and Zillow numbers. Unit tests run with `npm test`.
 
 Locally, emails aren't sent. Wrangler prints them to the console and saves them under `.wrangler/tmp/email/`.
 
@@ -87,6 +117,18 @@ npm run db:migrate:remote && npm run deploy   # production
    - `PRO_EMAILS`, a comma-separated list of emails that always get Pro (optional).
    - Leave `DEV_MODE` empty. If it were set, sign-in codes would be shown to anyone.
 
+### Area data setup
+
+- **Zillow** loads by itself. The daily cron imports up to three stale datasets per run, so all nine load within three days of the first deploy. To load them right away, set an admin token and call the import endpoint once per dataset:
+  ```bash
+  npx wrangler secret put ADMIN_TOKEN
+  curl -X POST "https://<your-worker>/api/admin/zillow-import?dataset=next" -H "Authorization: Bearer <token>"
+  ```
+  Each call imports the next stale dataset and lists what's left. Import status, including any error such as a changed Zillow file path, appears under **Explore → About this data**. If Zillow moves its CSVs, update the paths in `src/areas/zillowCsv.ts`, or point `ZILLOW_BASE_URL` at a mirror.
+- **Census key (recommended):** without a key the Census API allows about 500 calls a day. Get a free key at https://api.census.gov/data/key_signup.html and run `npx wrangler secret put CENSUS_API_KEY`.
+- **Overpass:** the public `overpass-api.de` instance has a fair-use limit. With heavy traffic, set `OVERPASS_URL` to your own or a commercial instance.
+- Area scoring needs the **Workers Paid** plan. The free plan's 10 ms CPU limit is too small for building tract metrics and importing Zillow CSVs.
+
 ### Giving someone Pro
 
 Online checkout isn't connected yet. To give someone Pro, either add their email to `PRO_EMAILS` and redeploy, or run:
@@ -118,6 +160,11 @@ All routes are under `/api` and use JSON. Everything except auth needs the sessi
 | GET / POST | `/api/trips` | List trips / save a finished trip (segments, pins, key notes, `emailSummary`) |
 | GET / PATCH / DELETE | `/api/trips/:id` | Trip with segments and pins / edit name, notes and key notes / delete |
 | GET | `/api/map` | Every segment and pin for the "My map" view |
+| POST | `/api/areas` | `{bbox: "w,s,e,n", have?: [geoid]}` → tracts in view with metrics; repeat while `pending > 0` |
+| GET | `/api/areas/status` | Which Zillow datasets are loaded, and cache counts |
+| GET / POST | `/api/searches` | List saved searches / save one (`name`, `criteria`, `view`, `results`) |
+| GET / PATCH / DELETE | `/api/searches/:id` | Open / update or rename / delete a saved search |
+| POST | `/api/admin/zillow-import?dataset=<id\|next>` | Import one Zillow dataset now (needs `Authorization: Bearer $ADMIN_TOKEN`) |
 
 ## Safety
 

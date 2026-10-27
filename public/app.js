@@ -1,5 +1,6 @@
 /* Green Zone client: paint streets by color while driving, save trips, review them on a map. */
 /* global L */
+import { createExplore } from "./explore.js";
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (value) =>
@@ -1031,6 +1032,25 @@ $("#view-key").addEventListener("submit", async (e) => {
   }
 });
 
+/* ---------- explore ---------- */
+
+const explore = createExplore({
+  map,
+  api,
+  esc,
+  toast,
+  openUpgrade,
+  getZones: () => state.zones,
+  getLastFix: () => state.lastFix,
+});
+$("#areas-btn").setAttribute("aria-pressed", String(explore.overlayOn()));
+$("#areas-btn").addEventListener("click", () => {
+  const on = !explore.overlayOn();
+  explore.setOverlay(on);
+  $("#areas-btn").setAttribute("aria-pressed", String(on));
+  toast(on ? "Showing area scores from Explore" : "Area scores hidden");
+});
+
 /* ---------- routing ---------- */
 
 const VIEWS = ["login", "drive", "trips", "panel", "key"];
@@ -1072,10 +1092,17 @@ function route() {
   renderAccount();
   if (!state.user) {
     state.view = "login";
+    explore.setContext(null);
     return showView("login");
   }
 
+  if (parts[0] !== "explore" && parts[0] !== "drive" && parts[0]) explore.setContext(null);
+
   switch (parts[0]) {
+    case "explore":
+      state.view = "explore";
+      showView("panel", "explore");
+      return explore.setContext("explore", parts[1] || null);
     case "trips":
       if (parts[1]) {
         state.view = "trip";
@@ -1097,6 +1124,7 @@ function route() {
       const wasDrive = state.view === "drive";
       state.view = "drive";
       showView("drive", "drive");
+      explore.setContext("drive");
       renderDraft();
       renderDock();
       startGps();
