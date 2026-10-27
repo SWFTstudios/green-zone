@@ -32,7 +32,7 @@ The account has about 30 other Workers and D1 databases for other projects. **On
 - `main` has Explore (PR #3, merged). **Guest mode and the real sender address are in PR #4 (open, draft), not on `main` yet.** So the live site still sends from `login@example.com`, and sign-in fails with "We couldn't send the email."
 - PR #4's **Workers Builds preview build failed** instantly (build `4d911eb4-5453-4f11-8dfe-bb0eac343b5c`). The cause is unknown; the log is only in the Cloudflare dashboard.
 - The GitHub Actions workflow `.github/workflows/deploy.yml` fails on every push because the `CLOUDFLARE_API_TOKEN` secret was never added. It duplicates what Workers Builds already does.
-- Production D1 has migrations `0001_init.sql`, `0002_area_insights.sql` and `0003_guest_accounts.sql` applied, and recorded in `d1_migrations`. There are 0 users, 0 trips and 3 failed sign-in code requests.
+- Production and preview D1 have migrations `0001_init.sql` through `0004_source_cache.sql` applied, and recorded in `d1_migrations`. There are 0 users, 0 trips and 3 failed sign-in code requests.
 - **No Explore data has loaded yet:** `zillow_imports`, `zip_market` and `area_cache` are all empty. The daily cron (`23 9 * * *` UTC) hasn't run since Explore deployed.
 - **Unverified against the real services**, because the app was built in a sandbox that couldn't reach them:
   - TIGERweb layer and field names
@@ -164,14 +164,19 @@ Run the following on the live site, on a phone if possible. Record anything brok
    - Add "Typical home value" with a range and **Must have**, and failing areas get a dashed outline.
    - Tap an area to see its details.
    - Save a search, reload, reopen it from **Saved searches**, then rename and delete it.
-5. **Drive overlay:** on Drive, ▦ shows the area colors faintly.
+5. **Map layers:**
+   - In Explore, open **Layers** and switch each "Color neighborhoods by" option. The legend changes, and Active adults, Walk & bike and Night brightness show a spread of colors rather than one flat color. If one is flat or gray, look under **About this data** for a CDC or night-lights notice.
+   - Turn on **Night lights imagery**, switch to **Satellite**, and tap **3D**.
+   - Turn on **Also show on Drive**. On Drive, the area colors show faintly, and tapping one opens a card.
+   - Type in the place box, and suggestions appear.
 6. **Account menu:** **Save my work with email** sends a code, the account keeps the guest's trip, and the badge changes to **FREE**.
 7. **Sign out:** the sign-in screen offers **Continue as guest**, and it works.
 8. **Pro (optional):** `UPDATE users SET plan='pro' WHERE email='<owner email>'`. The **Key** page then allows custom zones, such as Purple.
 
 ## Phase 7: Hardening (after it works)
 
-- **Map tiles:** the app uses `tile.openstreetmap.org`, which is meant for light use only. Before real traffic, switch to a tile provider account (MapTiler, Stadia, Mapbox and others) in `public/app.js`.
+- **Map tiles:** base maps come from OpenFreeMap (free, no key) with an OpenStreetMap raster fallback, and place search uses the public Photon server. Before heavy traffic, consider a tile and geocoding provider account, configured in `BASE_STYLES` (`public/gzmap.js`) and `fetchSuggestions` (`public/explore.js`).
+- **Data source checks:** confirm the CDC PLACES dataset id (`cwsq-ngmh`, tract-level) is still current at data.cdc.gov, and that the NASA GIBS Black Marble tile URL in `src/areas/index.ts` returns images. Both can be overridden with `CDC_PLACES_DATASET` and `NIGHT_LIGHTS_TILES`.
 - **Place search** calls Nominatim from the browser. Keep it low-volume, or move it to a provider with a key.
 - **Rate limiting:** add Cloudflare WAF rate-limiting rules for `/api/auth/*`, `/api/areas` and `/api/admin/*` on the workers.dev hostname or a custom domain.
 - **Custom domain (optional):** for example `greenzone.swftstudios.com` as the app's address, under *Worker → Settings → Domains & Routes*. Sign-in links in emails use whichever host the request came in on.

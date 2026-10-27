@@ -1,5 +1,5 @@
 // Keeps the app shell available when signal drops mid-drive. API calls always go to the network.
-const CACHE = "green-zone-v2";
+const CACHE = "green-zone-v3";
 const SHELL = [
   "/",
   "/index.html",
@@ -7,8 +7,10 @@ const SHELL = [
   "/styles.css",
   "/icon.svg",
   "/manifest.webmanifest",
-  "/vendor/leaflet/leaflet.js",
-  "/vendor/leaflet/leaflet.css",
+  "/vendor/maplibre/maplibre-gl.mjs",
+  "/vendor/maplibre/maplibre-gl-worker.mjs",
+  "/vendor/maplibre/maplibre-gl.css",
+  "/gzmap.js",
   "/explore.js",
   "/areas-core.js",
 ];

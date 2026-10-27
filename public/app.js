@@ -1,6 +1,6 @@
 /* Green Zone client: paint streets by color while driving, save trips, review them on a map. */
-/* global L */
 import { createExplore } from "./explore.js";
+import { createMap } from "./gzmap.js";
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (value) =>
@@ -109,38 +109,22 @@ async function api(path, { method = "GET", body } = {}) {
 
 /* ---------- map ---------- */
 
-const map = L.map("map", { zoomControl: true, attributionControl: true }).setView([39.5, -98.35], 4);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19,
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-}).addTo(map);
-map.zoomControl.setPosition("topright");
+function savedBase() {
+  try {
+    return localStorage.getItem("gz_base") || "streets";
+  } catch {
+    return "streets";
+  }
+}
 
-const driveLayer = L.layerGroup();
-const viewLayer = L.layerGroup();
-const meLayer = L.layerGroup().addTo(map);
-let meDot = null;
-let meRing = null;
+const map = createMap("map", { base: savedBase(), center: [39.5, -98.35], zoom: 4 });
+// Exposed for debugging and automated tests.
+globalThis.greenZoneMap = map.raw;
+const driveLayer = map.group("drive", 40);
+const viewLayer = map.group("view", 30);
 
 function zoneById(id) {
   return state.zones.find((z) => z.id === id);
-}
-
-function lineStyle(color) {
-  return { color, weight: 8, opacity: 0.85, lineCap: "round", lineJoin: "round" };
-}
-
-function pinMarker(pin, color) {
-  const icon = L.divIcon({
-    className: "",
-    html: `<div class="pin-icon" style="background:${esc(color || "#475569")}"><span>✎</span></div>`,
-    iconSize: [26, 26],
-    iconAnchor: [13, 26],
-    popupAnchor: [0, -24],
-  });
-  const marker = L.marker([pin.lat, pin.lng], { icon });
-  marker.bindPopup(esc(pin.note || "(no text)"));
-  return marker;
 }
 
 map.on("dragstart", () => {
@@ -306,7 +290,7 @@ $("#logout-btn").addEventListener("click", async () => {
   stopGps();
   state.user = null;
   state.draft = null;
-  driveLayer.clearLayers();
+  driveLayer.clear();
   location.hash = "";
   route();
 });
@@ -383,15 +367,14 @@ function openSegment() {
 let segmentLines = [];
 
 function renderDraft() {
-  driveLayer.clearLayers();
+  driveLayer.clear();
   segmentLines = [];
   const d = state.draft;
   if (!d) return;
   for (const seg of d.segments) {
-    const line = L.polyline(seg.path, lineStyle(zoneById(seg.zoneTypeId)?.color || "#64748b")).addTo(driveLayer);
-    segmentLines.push(line);
+    segmentLines.push(driveLayer.line(seg.path, zoneById(seg.zoneTypeId)?.color || "#64748b"));
   }
-  for (const pin of d.pins) pinMarker(pin, zoneById(pin.zoneTypeId)?.color).addTo(driveLayer);
+  for (const pin of d.pins) driveLayer.pin(pin, zoneById(pin.zoneTypeId)?.color);
 }
 
 function freshFix() {
@@ -427,7 +410,7 @@ function selectZone(zoneId) {
   if (previous) seg.path.push(previous.path[previous.path.length - 1]);
   else if (fix && !state.drawMode) seg.path.push([fix.lat, fix.lng]);
   d.segments.push(seg);
-  segmentLines.push(L.polyline(seg.path, lineStyle(zone.color)).addTo(driveLayer));
+  segmentLines.push(driveLayer.line(seg.path, zone.color));
 
   saveDraftNow();
   startGps();
@@ -520,20 +503,14 @@ function onPosition(pos) {
   const { latitude: lat, longitude: lng, accuracy: acc } = pos.coords;
   state.lastFix = { lat, lng, acc, t: Date.now() };
   const ll = [lat, lng];
-  if (!meDot) {
-    meRing = L.circle(ll, { radius: acc, color: "#2563eb", weight: 1, fillOpacity: 0.08, interactive: false }).addTo(meLayer);
-    meDot = L.circleMarker(ll, { radius: 8, color: "#fff", weight: 3, fillColor: "#2563eb", fillOpacity: 1, interactive: false }).addTo(meLayer);
-  } else {
-    meDot.setLatLng(ll);
-    meRing.setLatLng(ll).setRadius(acc);
-  }
+  map.setMe(lat, lng, acc);
   if (acc <= 30) setGpsStatus("ok", `GPS ±${Math.round(acc)} m`);
   else if (acc <= MAX_ACCURACY_M) setGpsStatus("weak", `GPS ±${Math.round(acc)} m`);
   else setGpsStatus("weak", `Weak GPS ±${Math.round(acc)} m`);
 
   if (state.view === "drive" && state.follow) {
     if (state.firstFix) map.setView(ll, 17);
-    else map.panTo(ll, { animate: true });
+    else map.panTo(ll);
   }
   state.firstFix = false;
   if (!state.drawMode && acc <= MAX_ACCURACY_M) addPoint(ll);
@@ -667,7 +644,7 @@ $("#note-form").addEventListener("submit", (e) => {
     createdAt: Date.now(),
   };
   d.pins.push(pin);
-  pinMarker(pin, zoneById(pin.zoneTypeId)?.color).addTo(driveLayer);
+  driveLayer.pin(pin, zoneById(pin.zoneTypeId)?.color);
   saveDraftNow();
   $("#note-dialog").close();
   renderDock();
@@ -807,19 +784,26 @@ function colorFor(zoneTypeId, legend) {
   return legend?.find((l) => l.zoneTypeId === zoneTypeId)?.color || zoneById(zoneTypeId)?.color || "#64748b";
 }
 
-/** Zooms to the layers, keeping them clear of the top bar and whichever sheet covers the map. */
-function fitTo(layers) {
-  const bounds = L.featureGroup(layers).getBounds();
-  if (!bounds.isValid()) return;
-  const topLeft = [40, 40 + 52];
-  const bottomRight = [40, 40];
+/** Map padding that keeps content clear of the top bar and whichever sheet covers the map. */
+function mapPadding() {
+  const pad = { top: 40 + 52, left: 40, bottom: 40, right: 40 };
   const cover = state.view === "drive" ? $(".dock") : $("#view-panel");
   const r = cover?.getBoundingClientRect();
   if (r && r.height > 0 && !cover.classList.contains("collapsed")) {
-    if (window.innerWidth >= 900 && cover.id === "view-panel") topLeft[0] = r.right + 24;
-    else bottomRight[1] = window.innerHeight - r.top + 24;
+    if (window.innerWidth >= 900 && cover.id === "view-panel") pad.left = r.right + 24;
+    else pad.bottom = window.innerHeight - r.top + 24;
   }
-  map.fitBounds(bounds, { paddingTopLeft: topLeft, paddingBottomRight: bottomRight, maxZoom: 17 });
+  return pad;
+}
+
+/** Zooms to the given lines and pins (anything with bounds()). */
+function fitTo(items) {
+  const boxes = items.map((i) => i.bounds()).filter(Boolean);
+  if (!boxes.length) return;
+  const b = boxes.reduce((u, x) => ({ s: Math.min(u.s, x.s), w: Math.min(u.w, x.w), n: Math.max(u.n, x.n), e: Math.max(u.e, x.e) }));
+  // A single point would zoom in all the way; give it a little room.
+  if (b.n - b.s < 0.002 && b.e - b.w < 0.002) return map.flyTo([(b.s + b.n) / 2, (b.w + b.e) / 2], 16);
+  map.fitBounds(b, { padding: mapPadding(), maxZoom: 17 });
 }
 
 let currentTrip = null;
@@ -827,7 +811,7 @@ let currentTrip = null;
 async function renderTrip(id) {
   const body = $("#panel-body");
   body.innerHTML = `<p class="muted">Loading…</p>`;
-  viewLayer.clearLayers();
+  viewLayer.clear();
   try {
     currentTrip = await api(`/api/trips/${encodeURIComponent(id)}`);
   } catch (err) {
@@ -835,8 +819,8 @@ async function renderTrip(id) {
     return;
   }
   const { trip, segments, pins } = currentTrip;
-  const layers = segments.map((s) => L.polyline(s.path, lineStyle(colorFor(s.zoneTypeId, trip.legend))).addTo(viewLayer));
-  const pinLayers = pins.map((p) => pinMarker(p, p.zoneTypeId ? colorFor(p.zoneTypeId, trip.legend) : null).addTo(viewLayer));
+  const layers = segments.map((s) => viewLayer.line(s.path, colorFor(s.zoneTypeId, trip.legend)));
+  const pinLayers = pins.map((p) => viewLayer.pin(p, p.zoneTypeId ? colorFor(p.zoneTypeId, trip.legend) : null));
   renderTripPanel(false);
   fitTo([...layers, ...pinLayers]);
 }
@@ -895,8 +879,8 @@ function renderTripPanel(editing) {
   body.querySelectorAll("[data-pin]").forEach((btn) =>
     btn.addEventListener("click", () => {
       const p = pins[Number(btn.dataset.pin)];
-      map.setView([p.lat, p.lng], 18);
-      L.popup().setLatLng([p.lat, p.lng]).setContent(esc(p.note || "(no text)")).openOn(map);
+      map.flyTo([p.lat, p.lng], 18);
+      map.popup([p.lat, p.lng], esc(p.note || "(no text)"));
     }),
   );
   $("#trip-edit")?.addEventListener("click", () => renderTripPanel(true));
@@ -937,7 +921,7 @@ let mapData = null;
 async function renderMyMap() {
   const body = $("#panel-body");
   body.innerHTML = `<p class="muted">Loading…</p>`;
-  viewLayer.clearLayers();
+  viewLayer.clear();
   try {
     mapData = await api("/api/map");
   } catch (err) {
@@ -958,7 +942,7 @@ function myMapZones() {
 }
 
 function drawMyMap(fit) {
-  viewLayer.clearLayers();
+  viewLayer.clear();
   const tripsById = new Map(mapData.trips.map((t) => [t.id, t]));
   const totals = {};
   const layers = [];
@@ -966,14 +950,14 @@ function drawMyMap(fit) {
     totals[s.zoneTypeId] = (totals[s.zoneTypeId] || 0) + s.lengthM;
     if (hiddenZones.has(s.zoneTypeId)) continue;
     const trip = tripsById.get(s.tripId);
-    const line = L.polyline(s.path, lineStyle(zoneById(s.zoneTypeId)?.color || colorFor(s.zoneTypeId, trip?.legend)));
-    line.bindPopup(`<b>${esc(trip?.name || "Trip")}</b><br>${esc(fmtDate(trip?.startedAt || 0))}<br><a href="#/trips/${esc(s.tripId)}">Open trip</a>`);
-    layers.push(line.addTo(viewLayer));
+    const line = viewLayer.line(s.path, zoneById(s.zoneTypeId)?.color || colorFor(s.zoneTypeId, trip?.legend));
+    line.popup(`<b>${esc(trip?.name || "Trip")}</b><br>${esc(fmtDate(trip?.startedAt || 0))}<br><a href="#/trips/${esc(s.tripId)}">Open trip</a>`);
+    layers.push(line);
   }
   if (showPins) {
     for (const p of mapData.pins) {
       if (p.zoneTypeId && hiddenZones.has(p.zoneTypeId)) continue;
-      layers.push(pinMarker(p, p.zoneTypeId ? zoneById(p.zoneTypeId)?.color || colorFor(p.zoneTypeId, tripsById.get(p.tripId)?.legend) : null).addTo(viewLayer));
+      layers.push(viewLayer.pin(p, p.zoneTypeId ? zoneById(p.zoneTypeId)?.color || colorFor(p.zoneTypeId, tripsById.get(p.tripId)?.legend) : null));
     }
   }
   const zones = myMapZones().filter((z) => totals[z.id] || mapData.pins.some((p) => p.zoneTypeId === z.id));
@@ -1119,13 +1103,7 @@ const explore = createExplore({
   openUpgrade,
   getZones: () => state.zones,
   getLastFix: () => state.lastFix,
-});
-$("#areas-btn").setAttribute("aria-pressed", String(explore.overlayOn()));
-$("#areas-btn").addEventListener("click", () => {
-  const on = !explore.overlayOn();
-  explore.setOverlay(on);
-  $("#areas-btn").setAttribute("aria-pressed", String(on));
-  toast(on ? "Showing area scores from Explore" : "Area scores hidden");
+  getPadding: () => mapPadding(),
 });
 
 /* ---------- routing ---------- */
@@ -1138,12 +1116,10 @@ function showView(name, tab) {
   document.body.classList.toggle("drive-active", name === "drive");
   document.body.classList.toggle("panel-open", name === "panel");
   const driveShown = name === "drive";
-  if (driveShown) map.addLayer(driveLayer);
-  else map.removeLayer(driveLayer);
-  if (name === "panel") map.addLayer(viewLayer);
-  else map.removeLayer(viewLayer);
+  driveLayer.show(driveShown);
+  viewLayer.show(name === "panel");
   $("#view-panel").classList.remove("collapsed");
-  setTimeout(() => map.invalidateSize(), 0);
+  setTimeout(() => map.resize(), 0);
 }
 
 async function handleVerifyLink(query) {
@@ -1193,8 +1169,6 @@ function route() {
     return showView("login");
   }
 
-  if (parts[0] !== "explore" && parts[0] !== "drive" && parts[0]) explore.setContext(null);
-
   switch (parts[0]) {
     case "explore":
       state.view = "explore";
@@ -1204,18 +1178,22 @@ function route() {
       if (parts[1]) {
         state.view = "trip";
         showView("panel", "trips");
+        explore.setContext("view");
         return renderTrip(parts[1]);
       }
       state.view = "trips";
       showView("trips", "trips");
+      explore.setContext(null);
       return renderTrips();
     case "map":
       state.view = "map";
       showView("panel", "map");
+      explore.setContext("view");
       return renderMyMap();
     case "key":
       state.view = "key";
       showView("key", "key");
+      explore.setContext(null);
       return renderKey();
     default: {
       const wasDrive = state.view === "drive";
@@ -1226,7 +1204,7 @@ function route() {
       renderDock();
       startGps();
       if (!wasDrive && state.follow && state.lastFix) map.setView([state.lastFix.lat, state.lastFix.lng], Math.max(map.getZoom(), 16));
-      else if (!wasDrive && state.draft) fitTo(driveLayer.getLayers());
+      else if (!wasDrive && state.draft) fitTo(driveLayer.items());
     }
   }
 }

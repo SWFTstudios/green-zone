@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseAcsResponse, acsUrl, ACS_VARIABLES } from "../src/areas/acs.ts";
 import { type AreaGeometry, findContaining, geometryBBox, parseBBox, pointInGeometry, roundGeometry, tileBBox, tilesFor } from "../src/areas/geo.ts";
+import { sampleNightLights, tileUrl, tileXY, tilesForBBox } from "../src/areas/nightlights.ts";
 import { aggregateOsm, countElement, emptyCounts, landUseSummary } from "../src/areas/osm.ts";
+import { parsePlaces, placesUrl } from "../src/areas/places.ts";
 import { ZILLOW_DATASETS, ZillowCsvParser, buildUpserts, parseCsvLine } from "../src/areas/zillowCsv.ts";
 
 const square = (w: number, s: number, e: number, n: number): AreaGeometry => ({
@@ -180,4 +182,65 @@ test("Zillow upserts escape text and split by size", () => {
   assert.match(stmts[0], /400000\.46, 0\.05123, '2026-09', 1\)/);
   const total = stmts.join("").match(/\('1\d{4}'/g)!.length;
   assert.equal(total, 50);
+});
+
+test("ACS commute shares exclude people who work from home", () => {
+  const vars = Object.values(ACS_VARIABLES);
+  const header = ["NAME", ...vars, "state", "county", "tract"];
+  const row = header.map(() => "0");
+  const set = (key: keyof typeof ACS_VARIABLES, v: string) => (row[header.indexOf(ACS_VARIABLES[key])] = v);
+  set("commuters", "1000");
+  set("workFromHome", "200");
+  set("commuteWalk", "60");
+  set("commuteBike", "20");
+  set("commuteTransit", "240");
+  row[header.indexOf("state")] = "36";
+  row[header.indexOf("county")] = "061";
+  row[header.indexOf("tract")] = "000100";
+  const m = parseAcsResponse([header, row])["36061000100"];
+  assert.equal(m.walkBikeRate, 0.1);
+  assert.equal(m.transitRate, 0.3);
+  assert.equal(m.workFromHomeRate, 0.2);
+});
+
+test("CDC PLACES rows turn inactivity into an active-adults share", () => {
+  const out = parsePlaces([
+    { locationname: "36061000100", measureid: "LPA", data_value: "22.5" },
+    { locationname: "36061000200", data_value: 31 },
+    { locationname: "bad", data_value: "10" },
+    { locationname: "36061000300", data_value: "n/a" },
+  ]);
+  assert.deepEqual(out, { "36061000100": 0.775, "36061000200": 0.69 });
+  assert.match(placesUrl("https://data.cdc.gov/", "cwsq-ngmh", "36061", "tok"), /^https:\/\/data\.cdc\.gov\/resource\/cwsq-ngmh\.json\?countyfips=36061&measureid=LPA&.*%24%24app_token=tok$/);
+});
+
+test("night lights average tile pixels inside each area", () => {
+  const z = 8;
+  const { x, y } = tileXY(-74, 40.7, z);
+  assert.deepEqual(tilesForBBox({ w: -74.01, s: 40.69, e: -73.99, n: 40.71 }, z), [{ x, y }]);
+  assert.equal(tileUrl("https://t/{z}/{y}/{x}.png", z, x, y), `https://t/8/${y}/${x}.png`);
+  // A 256px RGBA tile: left half bright white, right half black.
+  const size = 256;
+  const data = new Uint8Array(size * size * 4);
+  for (let py = 0; py < size; py++) for (let px = 0; px < size / 2; px++) data.set([255, 255, 255, 255], (py * size + px) * 4);
+  const n = 2 ** z;
+  const lngAt = (fx: number) => ((x + fx) / n) * 360 - 180;
+  const latAt = (fy: number) => (Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + fy)) / n))) * 180) / Math.PI;
+  const box = (fx0: number, fx1: number) => {
+    const b = { w: lngAt(fx0), e: lngAt(fx1), n: latAt(0.3), s: latAt(0.7) };
+    return { bbox: b, geometry: square(b.w, b.s, b.e, b.n), lat: (b.s + b.n) / 2, lng: (b.w + b.e) / 2 };
+  };
+  const areas = [
+    { geoid: "bright", ...box(0.1, 0.3) },
+    { geoid: "dark", ...box(0.7, 0.9) },
+    { geoid: "half", ...box(0.4, 0.6) },
+  ];
+  const out = sampleNightLights([{ x, y, z, img: { width: size, height: size, channels: 4, data } }], areas);
+  assert.equal(out.get("bright"), 100);
+  assert.equal(out.get("dark"), 0);
+  assert.ok(Math.abs(out.get("half")! - 50) < 3, `half is ~50, got ${out.get("half")}`);
+  // Indexed PNGs use the palette.
+  const indexed = { width: 1, height: 1, channels: 1, data: [1], palette: [[0, 0, 0], [255, 255, 255]] };
+  const tiny = sampleNightLights([{ x, y, z, img: indexed }], [{ geoid: "p", ...box(0.4, 0.6) }]);
+  assert.equal(tiny.get("p"), 100);
 });

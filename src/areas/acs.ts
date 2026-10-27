@@ -26,6 +26,11 @@ export const ACS_VARIABLES = {
   units20to49: "B25024_008E",
   units50plus: "B25024_009E",
   mobileHome: "B25024_010E",
+  commuters: "B08301_001E",
+  commuteTransit: "B08301_010E",
+  commuteBike: "B08301_018E",
+  commuteWalk: "B08301_019E",
+  workFromHome: "B08301_021E",
 } as const;
 
 export interface AcsMetrics {
@@ -43,6 +48,9 @@ export interface AcsMetrics {
   pctSmallMulti: number | null;
   pctLargeMulti: number | null;
   pctMobile: number | null;
+  walkBikeRate: number | null;
+  transitRate: number | null;
+  workFromHomeRate: number | null;
 }
 
 type Key = keyof typeof ACS_VARIABLES;
@@ -70,6 +78,11 @@ export function parseAcsResponse(rows: string[][]): Record<string, AcsMetrics> {
   if (!Array.isArray(header)) return {};
   const col = new Map(header.map((h, i) => [h, i]));
   const get = (row: string[], key: Key) => value(row[col.get(ACS_VARIABLES[key]) ?? -1]);
+  const travelers = (row: string[]) => {
+    const total = get(row, "commuters");
+    const home = get(row, "workFromHome");
+    return total === null ? null : total - (home ?? 0);
+  };
   const out: Record<string, AcsMetrics> = {};
   for (const row of data) {
     const geoid = `${row[col.get("state") ?? -1] ?? ""}${row[col.get("county") ?? -1] ?? ""}${row[col.get("tract") ?? -1] ?? ""}`;
@@ -96,6 +109,10 @@ export function parseAcsResponse(rows: string[][]): Record<string, AcsMetrics> {
         struct,
       ),
       pctMobile: share(get(row, "mobileHome"), struct),
+      // Shares of people who travel to work (those working from home are left out).
+      walkBikeRate: share(sum(get(row, "commuteWalk"), get(row, "commuteBike")), travelers(row)),
+      transitRate: share(get(row, "commuteTransit"), travelers(row)),
+      workFromHomeRate: share(get(row, "workFromHome"), get(row, "commuters")),
     };
   }
   return out;

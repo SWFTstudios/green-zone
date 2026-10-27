@@ -14,3 +14,5 @@ ADMIN_TOKEN=change-me
 # CENSUS_API_URL=http://127.0.0.1:8790/census
 # OVERPASS_URL=http://127.0.0.1:8790/overpass
 # ZILLOW_BASE_URL=http://127.0.0.1:8790/zillow
+# CDC_PLACES_URL=http://127.0.0.1:8790/cdc
+# NIGHT_LIGHTS_TILES=http://127.0.0.1:8790/night/{z}/{y}/{x}.png

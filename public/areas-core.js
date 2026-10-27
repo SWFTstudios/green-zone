@@ -14,6 +14,8 @@ export const GROUPS = [
 const Z = "Zillow";
 const ACS = "Census ACS";
 const OSM = "OpenStreetMap";
+const CDC = "CDC PLACES";
+const NASA = "NASA Black Marble";
 
 export const LAND_USES = [
   "Residential",
@@ -60,6 +62,11 @@ export const METRICS = [
   { key: "unemploymentRate", group: "Economy", label: "Unemployment rate", fmt: "pct", source: ACS, mode: "lower" },
   { key: "population", group: "Economy", label: "Population", fmt: "int", source: ACS, mode: "higher" },
   { key: "popDensity", group: "Economy", label: "People per km²", fmt: "int", source: ACS, mode: "higher" },
+  { key: "walkBikeRate", group: "Outdoors & lighting", label: "Commuters who walk or bike", fmt: "pct", source: ACS, mode: "higher", help: "Share of people traveling to work on foot or by bike. A sign of streets people are comfortable walking." },
+  { key: "transitRate", group: "Amenities & transit", label: "Commuters who take transit", fmt: "pct", source: ACS, mode: "higher" },
+  { key: "workFromHomeRate", group: "Economy", label: "Residents who work from home", fmt: "pct", source: ACS, mode: "higher" },
+  { key: "activeAdults", group: "Outdoors & lighting", label: "Adults active in their free time", fmt: "pct", source: CDC, mode: "higher", help: "Share of adults who exercise outside of work (CDC estimate from health surveys). The closest free stand-in for where people run and work out." },
+  { key: "nightLight", group: "Outdoors & lighting", label: "Night brightness (satellite)", fmt: "dec", source: NASA, mode: "higher", help: "How bright the area looks from space at night, 0 (dark) to 100 (brightest). NASA Black Marble 2016 composite." },
   { key: "outdoorPerKm2", group: "Outdoors & lighting", label: "Outdoor activity spots per km²", fmt: "dec", source: OSM, mode: "higher", help: "Parks, playgrounds, sports and fitness spots, plus trails and footpaths. A stand-in for where people run and work out outside." },
   { key: "litPerKm2", group: "Outdoors & lighting", label: "Street lighting per km²", fmt: "dec", source: OSM, mode: "higher", help: "Streets mapped as lit at night, plus individual street lamps." },
   { key: "pathsPerKm2", group: "Outdoors & lighting", label: "Trails, footpaths and bike paths per km²", fmt: "dec", source: OSM, mode: "higher" },
@@ -90,6 +97,7 @@ export const PRESETS = {
       c("unemploymentRate", 2),
       c("litPerKm2", 2),
       c("outdoorPerKm2", 2),
+      c("activeAdults", 2),
       c("myRating", 3),
     ],
   },
@@ -114,7 +122,15 @@ export const PRESETS = {
   },
   outdoor: {
     label: "Active and well lit",
-    criteria: [c("outdoorPerKm2", 5), c("litPerKm2", 5), c("pathsPerKm2", 3), c("parks", 2), c("transitPerKm2", 1), c("vacancyRate", 1)],
+    criteria: [
+      c("activeAdults", 5),
+      c("walkBikeRate", 4),
+      c("nightLight", 4),
+      c("outdoorPerKm2", 3),
+      c("litPerKm2", 3),
+      c("parks", 2),
+      c("vacancyRate", 1),
+    ],
   },
   singleFamily: {
     label: "Single-family neighborhoods",
@@ -125,6 +141,58 @@ export const PRESETS = {
 export const DEFAULT_SETTINGS = { preset: "balanced", green: 67, red: 34, hideFails: false };
 
 export const IMPORTANCE = ["Ignore", "Minor", "Some", "Important", "Very important", "Critical"];
+
+/* ---------- map overlays ---------- */
+
+/** Ways to color areas on the map. "score" uses the user's criteria; the rest are single measures. */
+export const OVERLAYS = [
+  { id: "score", label: "Your criteria", short: "Score", help: "Green, yellow and red from the criteria in Explore." },
+  { id: "activeAdults", label: "Active adults", short: "Active", metric: "activeAdults", source: CDC, ramp: ["#fff7bc", "#c2e699", "#78c679", "#31a354", "#006837"] },
+  { id: "walkBikeRate", label: "Walk & bike commuters", short: "Walk/bike", metric: "walkBikeRate", source: ACS, ramp: ["#f1eef6", "#bdc9e1", "#74a9cf", "#2b8cbe", "#045a8d"] },
+  { id: "nightLight", label: "Night brightness", short: "Night", metric: "nightLight", source: NASA, ramp: ["#000004", "#3b0f70", "#8c2981", "#de4968", "#fe9f6d", "#fcfdbf"] },
+  { id: "transitRate", label: "Transit commuters", short: "Transit", metric: "transitRate", source: ACS, ramp: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"] },
+  { id: "off", label: "Off", short: "Off" },
+];
+export const overlayById = (id) => OVERLAYS.find((o) => o.id === id) || OVERLAYS[0];
+
+function hex(c) {
+  const n = parseInt(c.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** Color at t (0–1) along a list of hex stops. */
+export function rampColor(ramp, t) {
+  const x = Math.min(1, Math.max(0, Number.isFinite(t) ? t : 0)) * (ramp.length - 1);
+  const i = Math.min(ramp.length - 2, Math.floor(x));
+  const a = hex(ramp[i]);
+  const b = hex(ramp[i + 1]);
+  const f = x - i;
+  return `#${a.map((v, k) => Math.round(v + (b[k] - v) * f).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function quantile(sorted, q) {
+  if (!sorted.length) return null;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  return sorted[lo] + (sorted[Math.min(sorted.length - 1, lo + 1)] - sorted[lo]) * (pos - lo);
+}
+
+/**
+ * Colors areas by one measure. The scale runs from the 5th to the 95th percentile of the
+ * areas passed in (usually those on screen), so neighborhoods stand out from each other.
+ */
+export function overlayColors(areas, overlay) {
+  const values = areas.map((a) => a.metrics?.[overlay.metric]).filter(finite).sort((x, y) => x - y);
+  const min = quantile(values, 0.05);
+  const max = quantile(values, 0.95);
+  const colors = new Map();
+  for (const a of areas) {
+    const v = a.metrics?.[overlay.metric];
+    if (!finite(v)) continue;
+    colors.set(a.geoid, rampColor(overlay.ramp, max > min ? (v - min) / (max - min) : 0.5));
+  }
+  return { colors, min, max, count: values.length };
+}
 
 /* ---------- formatting ---------- */
 

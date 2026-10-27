@@ -3,6 +3,7 @@
 //   node test/mock-data-server.mjs [port]
 // then point TIGERWEB_URL, CENSUS_API_URL, OVERPASS_URL and ZILLOW_BASE_URL in .dev.vars at it.
 import http from "node:http";
+import { encode } from "fast-png";
 
 const PORT = Number(process.argv[2] || 8790);
 const GRID = { w: -75.3, s: 39.86, e: -75.0, n: 40.1, step: 0.02 };
@@ -102,6 +103,11 @@ function acs(params) {
       B25024_008E: Math.round(units * 0.05),
       B25024_009E: Math.round(units * 0.05),
       B25024_010E: 0,
+      B08301_001E: 2000,
+      B08301_010E: Math.round(2000 * (0.1 + east * 0.25)),
+      B08301_018E: Math.round(2000 * east * 0.04),
+      B08301_019E: Math.round(2000 * (0.02 + east * 0.12)),
+      B08301_021E: 300,
     };
     if (t.id % 17 === 0) values.B25064_001E = -666666666;
     return [...vars.map((v) => String(values[v] ?? 0)), "42", "101", t.tract];
@@ -132,6 +138,31 @@ function overpass(query) {
     }
   }
   return { version: 0.6, elements };
+}
+
+function places(params) {
+  return tracts.map((t) => ({
+    locationname: `42101${t.tract}`,
+    measureid: "LPA",
+    data_value: String((32 - (t.j / ROWS) * 14 + rand(t.id + 99) * 3).toFixed(1)),
+  }));
+}
+
+// Night-lights PNG tile: brightness falls off with distance from Center City.
+function nightTile(z, x, y) {
+  const size = 256;
+  const data = new Uint8Array(size * size * 4);
+  const n = 2 ** z;
+  for (let py = 0; py < size; py++) {
+    const lat = (Math.atan(Math.sinh(Math.PI * (1 - (2 * (y + (py + 0.5) / size)) / n))) * 180) / Math.PI;
+    for (let px = 0; px < size; px++) {
+      const lng = ((x + (px + 0.5) / size) / n) * 360 - 180;
+      const d = Math.hypot(lng + 75.16, (lat - 39.95) * 1.3);
+      const v = Math.max(0, Math.min(255, Math.round(255 * Math.exp(-d / 0.08))));
+      data.set([v, Math.round(v * 0.85), Math.round(v * 0.5), 255], (py * size + px) * 4);
+    }
+  }
+  return Buffer.from(encode({ width: size, height: size, data, channels: 4, depth: 8 }));
 }
 
 function zillowCsv(path) {
@@ -181,6 +212,13 @@ const server = http.createServer((req, res) => {
     req.on("data", (c) => (data += c));
     req.on("end", () => send(200, overpass(decodeURIComponent(new URLSearchParams(data).get("data") || ""))));
     return;
+  }
+  if (/^\/cdc\/resource\/[\w-]+\.json$/.test(p)) return send(200, places(url.searchParams));
+  const night = p.match(/^\/night\/(\d+)\/(\d+)\/(\d+)\.png$/);
+  if (night) {
+    const [z, y, x] = night.slice(1).map(Number);
+    res.writeHead(200, { "content-type": "image/png", "access-control-allow-origin": "*" });
+    return res.end(nightTile(z, x, y));
   }
   if (p.startsWith("/zillow/")) {
     if (p.includes("bdrmcnt_5")) return send(404, "Not Found", "text/plain");

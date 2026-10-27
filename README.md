@@ -29,7 +29,18 @@ Driving for dollars made easier. Drive a neighborhood, tap **Green**, **Yellow**
 - Tap an area for its score breakdown and every number behind it.
 - **Saved searches**: name a search to keep its criteria, map view and a snapshot of the results, then reopen, update, rename or delete it later. Free accounts get 5, Pro gets 100.
 - Your own drives count: streets you painted feed a "Your drive ratings" criterion, from +100 (all green) to −100 (all red).
-- On the Drive screen, **▦** shows the same area colors faintly under your painting.
+- **Also show on Drive** (in the Layers menu) shows the same area colors faintly under your painting, and tapping an area there opens a card with a link to it in Explore.
+
+**The map**
+- Vector map built on [MapLibre GL](https://maplibre.org/). It supports pinch, rotate and tilt, smooth zoom, and 3D buildings (the **3D** button).
+- **Layers** button: choose Map, Light or Satellite, and color neighborhoods by your criteria or by a single data layer:
+  - Active adults (CDC PLACES)
+  - Walk and bike commuters (Census ACS)
+  - Night brightness (NASA Black Marble)
+  - Transit commuters (Census ACS)
+- The Layers menu also turns on the NASA night-lights imagery and sets the overlay's opacity.
+- A legend shows the current layer and its range. On desktop, hovering an area shows its name and score.
+- The place search suggests addresses, neighborhoods and cities as you type, using [Photon](https://photon.komoot.io/).
 
 **Pro (any use case)**
 - Add your own zones with any name and color, for example *Purple: a community we want to reach out to*. Up to 24 zones.
@@ -43,12 +54,15 @@ Driving for dollars made easier. Drive a neighborhood, tap **Green**, **Yellow**
 | Home values by type (all, single-family, condo, 1–5 bedrooms) and 12-month change | [Zillow Research](https://www.zillow.com/research/data/) ZHVI | ZIP code | Free with attribution. Imported monthly by a cron job. |
 | Asking rents and 12-month change | Zillow Research ZORI | ZIP code | Used with ZHVI for gross rent yield. |
 | Home value, rent, income, vacancy, owner/renter share, year built, unemployment, units-in-structure mix, population | [Census ACS 5-year](https://www.census.gov/data/developers/data-sets/acs-5year.html) | Tract | Housing and economic tables only. Nothing about race, ethnicity, religion, sex, family status or disability is fetched or scored. |
+| How people get to work: walk or bike, transit, work from home | Census ACS 5-year, table B08301 | Tract | A free stand-in for "where people are out on foot". Shares count only people who travel to work. |
+| Active adults (share of adults who got physical activity outside work in the past month) | [CDC PLACES](https://www.cdc.gov/places/) via data.cdc.gov | Tract | Model-based estimate, 100% minus the "no leisure-time physical activity" measure. Refreshed yearly; cached 90 days. |
+| Night brightness | [NASA Black Marble](https://blackmarble.gsfc.nasa.gov/) (VIIRS) tiles from [NASA GIBS](https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api) | Tract | Average brightness of the 2016 composite inside each tract, 0–100. Also shown as map imagery. |
 | Tract and ZIP boundaries | [Census TIGERweb](https://tigerweb.geo.census.gov/) | Tract, ZCTA | Layers are looked up by name. |
 | Outdoor activity (parks, trails, fitness spots), street lighting (lit streets, street lamps), transit, grocery, schools, restaurants, healthcare, land use | [OpenStreetMap](https://www.openstreetmap.org/) via Overpass | Tract | Crowd-mapped, so coverage varies by city. |
 | Your drive ratings | Your own trips | Tract | Computed in the browser and visible only to you. |
 
 What isn't included, and why:
-- **Strava.** Strava's API terms (since November 2024) only allow showing an athlete's data to that athlete, and rule out aggregate heatmaps and analytics. "Where people work out outside" comes from OpenStreetMap parks, trails and fitness spots instead.
+- **Strava.** Strava's API terms (since November 2024) only allow showing an athlete's data to that athlete, and rule out aggregate heatmaps and analytics. "Where people work out outside" comes from CDC PLACES activity estimates, Census walk and bike commuting, and OpenStreetMap parks, trails and fitness spots instead.
 - **Legal zoning.** There's no free nationwide zoning dataset. "Main land use" is what's mapped in OpenStreetMap, labeled as not legal zoning. A parcel and zoning provider such as Regrid could be added as another source.
 - **Crime.** There's no reliable, free, nationwide source at neighborhood level.
 - **Zillow listings.** Zillow doesn't allow scraping listings, so only the free Research datasets are used.
@@ -61,7 +75,7 @@ How it runs: `POST /api/areas` takes the map view and returns tracts with metric
 - **Cloudflare D1** stores users, sessions, sign-in codes, zones, trips, painted segments, note pins, saved searches and cached area data (`migrations/`).
 - A **cron trigger** refreshes Zillow data daily (`src/areas/zillow.ts`).
 - **Cloudflare Email Service** (`send_email` binding) sends sign-in codes, the welcome email and trip summaries.
-- The front end is plain JavaScript with [Leaflet](https://leafletjs.com/) (served from `public/vendor/`) and OpenStreetMap tiles. It has no build step and can be installed to a phone's home screen.
+- The front end is plain JavaScript with [MapLibre GL JS](https://maplibre.org/) (copied into `public/vendor/` by `npm run vendor`). `public/gzmap.js` wraps it for the rest of the app. It has no build step and can be installed to a phone's home screen.
 
 Security notes: sign-in codes and session tokens are stored only as SHA-256 hashes. Codes expire after 10 minutes, allow 5 attempts, and are limited to 5 per email per hour. Sessions use an `HttpOnly`, `SameSite=Lax` cookie, and the API also rejects cross-site POST, PATCH and DELETE requests. Every query is scoped to the signed-in user.
 
@@ -74,7 +88,7 @@ npm run db:migrate:local
 npm run dev                        # http://localhost:8787
 ```
 
-To work on Explore offline, run `node test/mock-data-server.mjs` and uncomment the `*_URL` lines in `.dev.vars`. That serves a synthetic grid of Philadelphia tracts with made-up Census, OpenStreetMap and Zillow numbers. Unit tests run with `npm test`.
+To work on Explore offline, run `node test/mock-data-server.mjs` and uncomment the `*_URL` and `NIGHT_LIGHTS_TILES` lines in `.dev.vars`. That serves a synthetic grid of Philadelphia tracts with made-up Census, CDC, night-lights, OpenStreetMap and Zillow numbers. Unit tests run with `npm test`.
 
 Locally, emails aren't sent. Wrangler prints them to the console and saves them under `.wrangler/tmp/email/`.
 
@@ -129,6 +143,8 @@ Email sign-in sends from `login@greenzone.swftstudios.com`. Guest mode works wit
   Each call imports the next stale dataset and lists what's left. Import status, including any error such as a changed Zillow file path, appears under **Explore → About this data**. If Zillow moves its CSVs, update the paths in `src/areas/zillowCsv.ts`, or point `ZILLOW_BASE_URL` at a mirror.
 - **Census key (recommended):** without a key the Census API allows about 500 calls a day. Get a free key at https://api.census.gov/data/key_signup.html and run `npx wrangler secret put CENSUS_API_KEY`.
 - **Overpass:** the public `overpass-api.de` instance has a fair-use limit. With heavy traffic, set `OVERPASS_URL` to your own or a commercial instance.
+- **CDC PLACES** works without a key. For higher limits, create a free Socrata app token at data.cdc.gov and run `npx wrangler secret put SOCRATA_APP_TOKEN`. When CDC publishes a new PLACES release, set `CDC_PLACES_DATASET` to its dataset id.
+- **Night lights** use the NASA GIBS tile URL in `src/areas/index.ts`. Set `NIGHT_LIGHTS_TILES` (with `{z}`, `{y}`, `{x}`) and `NIGHT_LIGHTS_ZOOM` to use another source.
 - Area scoring needs the **Workers Paid** plan. The free plan's 10 ms CPU limit is too small for building tract metrics and importing Zillow CSVs.
 
 ### Giving someone Pro
@@ -145,7 +161,13 @@ A payment provider such as Stripe can set the same `plan` column from a webhook 
 
 ### Map tiles
 
-The app uses the public OpenStreetMap tile server, which is fine for light use. Before heavy production traffic, switch the tile URL in `public/app.js` to a tile provider you have an account with (MapTiler, Stadia, Mapbox and others), per the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
+The base maps are set in `BASE_STYLES` in `public/gzmap.js`:
+- **Map** and **Light** use free [OpenFreeMap](https://openfreemap.org/) vector styles (Liberty and Positron). They need no key and have no request limits.
+- **Satellite** uses [USGS](https://www.usgs.gov/) public-domain imagery.
+- If a style fails to load within 10 seconds, the map falls back to OpenStreetMap raster tiles. Those are fine for light use under the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
+- To use MapTiler, Stadia or another provider, change the style URLs.
+
+Place suggestions come from the public Photon server, which is meant for moderate use. For heavy traffic, run your own Photon or switch `fetchSuggestions` in `public/explore.js` to a paid geocoder.
 
 ## API
 

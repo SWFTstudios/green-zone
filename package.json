@@ -11,12 +11,15 @@
     "db:migrate:remote": "wrangler d1 migrations apply green-zone-db --remote",
     "types": "wrangler types",
     "typecheck": "tsc --noEmit",
-    "vendor": "mkdir -p public/vendor/leaflet && cp node_modules/leaflet/dist/leaflet.js node_modules/leaflet/dist/leaflet.css node_modules/leaflet/LICENSE public/vendor/leaflet/ && cp -r node_modules/leaflet/dist/images public/vendor/leaflet/",
+    "vendor": "mkdir -p public/vendor/maplibre && cp node_modules/maplibre-gl/dist/maplibre-gl.mjs node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs node_modules/maplibre-gl/dist/maplibre-gl.css node_modules/maplibre-gl/LICENSE.txt public/vendor/maplibre/ && sed -i '/^\\/\\/# sourceMappingURL=/d' public/vendor/maplibre/*.mjs",
     "test": "node --test --experimental-strip-types test/*.test.ts test/*.test.mjs"
   },
   "devDependencies": {
-    "leaflet": "^1.9.4",
+    "maplibre-gl": "^6.13.0",
     "typescript": "5.9.3",
     "wrangler": "4.150.0"
+  },
+  "dependencies": {
+    "fast-png": "^7.0.1"
   }
 }

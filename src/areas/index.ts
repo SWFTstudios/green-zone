@@ -1,7 +1,7 @@
 import type { User } from "../auth";
 import { HttpError, json, readJson } from "../http";
 import { type AcsMetrics, acsUrl, parseAcsResponse } from "./acs.ts";
-import { SourceError, fetchJson } from "./fetch";
+import { SourceError, USER_AGENT, fetchJson } from "./fetch";
 import {
   type AreaGeometry,
   type BBox,
@@ -12,7 +12,10 @@ import {
   tilesFor,
   unionBBox,
 } from "./geo.ts";
+import { decode } from "fast-png";
+import { type DecodedTile, sampleNightLights, tileUrl, tilesForBBox } from "./nightlights.ts";
 import { type OsmCounts, type OsmElement, aggregateOsm, landUseSummary, overpassQuery } from "./osm.ts";
+import { parsePlaces, placesUrl } from "./places.ts";
 import { type Tract, fetchTracts, fetchZctas } from "./tiger";
 import { ZILLOW_DATASETS, importStatus } from "./zillow";
 
@@ -24,8 +27,18 @@ const OSM_SPAN_CAP_DEG = 0.12;
 const METRICS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PARTIAL_RETRY_MS = 15 * 60 * 1000;
 const ACS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const PLACES_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_CENSUS = "https://api.census.gov/data";
 const DEFAULT_OVERPASS = "https://overpass-api.de/api/interpreter";
+const DEFAULT_PLACES = "https://data.cdc.gov";
+const DEFAULT_PLACES_DATASET = "cwsq-ngmh";
+export const DEFAULT_NIGHT_TILES =
+  "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png";
+const MAX_NIGHT_TILES = 4;
+/** Bump when the shape of cached metrics changes, so tracts are recomputed. */
+const METRICS_VERSION = 2;
+/** Bump when ACS_VARIABLES change, so cached county responses are refetched. */
+const ACS_CACHE_VERSION = 2;
 
 interface AreaRow {
   geoid: string;
@@ -61,7 +74,10 @@ export interface CachedMetrics extends Partial<AcsMetrics> {
   healthcare: number | null;
   landUse: string | null;
   landUseMix: Record<string, number> | null;
+  activeAdults: number | null;
+  nightLight: number | null;
   missing: string[];
+  v: number;
 }
 
 function round(value: number, decimals = 2): number {
@@ -108,7 +124,11 @@ async function countyAcs(env: Env, county: string): Promise<{ year: string; data
   const cached = await env.DB.prepare("SELECT year, data, fetched_at FROM acs_cache WHERE county = ?")
     .bind(county)
     .first<{ year: string; data: string; fetched_at: number }>();
-  if (cached && Date.now() - cached.fetched_at < ACS_TTL_MS) return { year: cached.year, data: JSON.parse(cached.data) };
+  const [cachedYear, cachedVersion] = (cached?.year || "").split("@");
+  const cachedCurrent = cached && Number(cachedVersion) === ACS_CACHE_VERSION;
+  if (cached && cachedCurrent && Date.now() - cached.fetched_at < ACS_TTL_MS) {
+    return { year: cachedYear, data: JSON.parse(cached.data) };
+  }
 
   const base = env.CENSUS_API_URL || DEFAULT_CENSUS;
   const first = Number(env.ACS_YEAR) || new Date().getUTCFullYear() - 2;
@@ -122,15 +142,67 @@ async function countyAcs(env: Env, county: string): Promise<{ year: string; data
         `INSERT INTO acs_cache (county, year, data, fetched_at) VALUES (?, ?, ?, ?)
          ON CONFLICT(county) DO UPDATE SET year = excluded.year, data = excluded.data, fetched_at = excluded.fetched_at`,
       )
-        .bind(county, year, JSON.stringify(data), Date.now())
+        .bind(county, `${year}@${ACS_CACHE_VERSION}`, JSON.stringify(data), Date.now())
         .run();
       return { year, data };
     } catch (err) {
       lastError = err;
     }
   }
-  if (cached) return { year: cached.year, data: JSON.parse(cached.data) };
+  if (cached) return { year: cachedYear, data: JSON.parse(cached.data) };
   throw lastError;
+}
+
+async function cached<T>(env: Env, key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
+  const row = await env.DB.prepare("SELECT data, fetched_at FROM source_cache WHERE key = ?")
+    .bind(key)
+    .first<{ data: string; fetched_at: number }>();
+  if (row && Date.now() - row.fetched_at < ttlMs) return JSON.parse(row.data) as T;
+  const value = await load();
+  await env.DB.prepare(
+    `INSERT INTO source_cache (key, data, fetched_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at`,
+  )
+    .bind(key, JSON.stringify(value), Date.now())
+    .run();
+  return value;
+}
+
+/** CDC PLACES "active adults" for every tract in a county. */
+function countyPlaces(env: Env, county: string): Promise<Record<string, number>> {
+  const dataset = env.CDC_PLACES_DATASET || DEFAULT_PLACES_DATASET;
+  return cached(env, `places:${dataset}:${county}`, PLACES_TTL_MS, async () =>
+    parsePlaces(
+      await fetchJson("CDC PLACES", placesUrl(env.CDC_PLACES_URL || DEFAULT_PLACES, dataset, county, env.SOCRATA_APP_TOKEN)),
+    ),
+  );
+}
+
+export function nightTileTemplate(env: Env): { url: string; zoom: number } {
+  return { url: env.NIGHT_LIGHTS_TILES || DEFAULT_NIGHT_TILES, zoom: Number(env.NIGHT_LIGHTS_ZOOM) || 8 };
+}
+
+/** NASA night-lights brightness (0–100) per tract, from the overlay's own PNG tiles. */
+async function nightLights(env: Env, tracts: Tract[], union: BBox): Promise<Map<string, number>> {
+  const { url, zoom } = nightTileTemplate(env);
+  const coords = tilesForBBox(union, zoom);
+  if (coords.length > MAX_NIGHT_TILES) throw new SourceError("NASA night lights", "area too large");
+  const tiles = await Promise.all(
+    coords.map(async ({ x, y }) => {
+      const src = tileUrl(url, zoom, x, y);
+      let res: Response;
+      try {
+        res = await fetch(src, { headers: { "user-agent": USER_AGENT }, signal: AbortSignal.timeout(20000) });
+      } catch {
+        throw new SourceError("NASA night lights", "unreachable");
+      }
+      if (!res.ok) throw new SourceError("NASA night lights", `HTTP ${res.status}`);
+      const png = decode(new Uint8Array(await res.arrayBuffer()));
+      const img: DecodedTile = { width: png.width, height: png.height, channels: png.channels, data: png.data, palette: png.palette };
+      return { x, y, z: zoom, img };
+    }),
+  );
+  return sampleNightLights(tiles, tracts);
 }
 
 async function overpass(env: Env, bbox: BBox): Promise<OsmElement[]> {
@@ -168,7 +240,11 @@ async function computeMetrics(env: Env, tracts: Tract[], notices: Set<string>): 
   const union = unionBBox(tracts.map((t) => t.bbox));
   const counties = [...new Set(tracts.map((t) => t.county))];
 
-  const [acsResults, osmResult, zctaResult] = await Promise.all([
+  const fail = (label: string) => (err: unknown) => {
+    notices.add(err instanceof Error ? err.message : `${label} unavailable`);
+    return null;
+  };
+  const [acsResults, osmResult, zctaResult, placesResults, nightResult] = await Promise.all([
     Promise.allSettled(counties.map((c) => countyAcs(env, c))),
     overpass(env, union).then(
       (elements) => aggregateOsm(elements, tracts),
@@ -177,11 +253,15 @@ async function computeMetrics(env: Env, tracts: Tract[], notices: Set<string>): 
         return null;
       },
     ),
-    fetchZctas(env, union).catch((err) => {
-      notices.add(err instanceof Error ? err.message : "ZIP boundaries unavailable");
-      return null;
-    }),
+    fetchZctas(env, union).catch(fail("ZIP boundaries")),
+    Promise.allSettled(counties.map((c) => countyPlaces(env, c))),
+    nightLights(env, tracts, union).catch(fail("NASA night lights")),
   ]);
+  const placesByCounty = new Map<string, Record<string, number>>();
+  placesResults.forEach((r, i) => {
+    if (r.status === "fulfilled") placesByCounty.set(counties[i], r.value);
+    else notices.add(r.reason instanceof Error ? r.reason.message : "CDC PLACES unavailable");
+  });
 
   const acsByCounty = new Map<string, { year: string; data: Record<string, AcsMetrics> }>();
   acsResults.forEach((r, i) => {
@@ -197,6 +277,8 @@ async function computeMetrics(env: Env, tracts: Tract[], notices: Set<string>): 
     if (!acsCounty) missing.push("census");
     if (!osmResult) missing.push("osm");
     if (!zctaResult) missing.push("zip");
+    if (!placesByCounty.has(t.county)) missing.push("cdc");
+    if (!nightResult) missing.push("night");
     out.set(t.geoid, {
       ...(acs || {}),
       zip: zctaResult ? (findContaining(zctaResult, t.lng, t.lat)?.zip ?? null) : null,
@@ -204,7 +286,10 @@ async function computeMetrics(env: Env, tracts: Tract[], notices: Set<string>): 
       acsYear: acsCounty?.year ?? null,
       popDensity: acs?.population != null ? round(acs.population / t.areaKm2, 0) : null,
       ...osmMetrics(osmResult?.get(t.geoid), t.areaKm2),
+      activeAdults: placesByCounty.get(t.county)?.[t.geoid] ?? null,
+      nightLight: nightResult?.get(t.geoid) ?? null,
       missing,
+      v: METRICS_VERSION,
     });
   }
 
@@ -219,7 +304,9 @@ async function computeMetrics(env: Env, tracts: Tract[], notices: Set<string>): 
 function needsMetrics(row: AreaRow, now: number): boolean {
   if (!row.metrics || !row.metrics_at) return true;
   if (now - row.metrics_at > METRICS_TTL_MS) return true;
-  const missing = (JSON.parse(row.metrics) as CachedMetrics).missing || [];
+  const metrics = JSON.parse(row.metrics) as CachedMetrics;
+  if (metrics.v !== METRICS_VERSION) return true;
+  const missing = metrics.missing || [];
   return missing.length > 0 && now - row.metrics_at > PARTIAL_RETRY_MS;
 }
 
@@ -418,5 +505,6 @@ export async function areaStatus(env: Env): Promise<Response> {
     }),
     zips: counts?.zips ?? 0,
     areasCached: counts?.areas ?? 0,
+    nightLights: nightTileTemplate(env),
   });
 }
