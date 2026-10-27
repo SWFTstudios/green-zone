@@ -28,6 +28,7 @@
     </button>
     <div class="account-menu" id="account-menu" hidden>
       <div class="account-email" id="account-email"></div>
+      <button type="button" id="save-account-btn" hidden>Save my work with email</button>
       <button type="button" id="upgrade-btn">See Pro features</button>
       <button type="button" id="logout-btn">Sign out</button>
     </div>
@@ -37,8 +38,9 @@
   <section class="page page-center" id="view-login" hidden>
     <div class="card login-card">
       <div class="login-logo"><span class="stripe g"></span><span class="stripe y"></span><span class="stripe r"></span></div>
-      <h1>Green Zone</h1>
-      <p class="muted">Driving for dollars made easier. Paint each street green, yellow or red as you drive, then keep a map of where you want to invest.</p>
+      <h1 id="login-title">Green Zone</h1>
+      <p class="muted" id="login-intro">Driving for dollars made easier. Paint each street green, yellow or red as you drive, then keep a map of where you want to invest.</p>
+      <p class="muted small" id="login-upgrade-note" hidden>Add your email to keep your trips and saved searches and use them on any device. If you already have an account, everything you made as a guest moves into it.</p>
       <form id="login-form" autocomplete="on">
         <label for="login-email">Email</label>
         <input id="login-email" name="email" type="email" inputmode="email" autocomplete="email" required placeholder="you@example.com">
@@ -53,6 +55,12 @@
         <button class="btn btn-link" type="button" id="code-back">Use a different email</button>
       </form>
       <p class="form-error" id="login-error" role="alert" hidden></p>
+      <div class="login-guest" id="login-guest">
+        <span class="login-or">or</span>
+        <button class="btn btn-ghost btn-block" type="button" id="guest-btn">Continue as guest</button>
+        <p class="muted small">No sign-up needed. Your work is saved in this browser, and you can add your email any time.</p>
+      </div>
+      <button class="btn btn-link" type="button" id="login-back" hidden>Keep using as a guest</button>
     </div>
   </section>
 
@@ -128,7 +136,7 @@
       <div id="finish-legend" class="legend-edit"></div>
       <label for="finish-notes">Notes</label>
       <textarea id="finish-notes" rows="4" maxlength="10000" placeholder="Streets to come back to, owners to look up, anything you noticed…"></textarea>
-      <label class="check"><input type="checkbox" id="finish-email" checked> Email me a summary of this trip</label>
+      <label class="check" id="finish-email-row"><input type="checkbox" id="finish-email" checked> Email me a summary of this trip</label>
       <p class="form-error" id="finish-error" role="alert" hidden></p>
       <div class="dialog-actions">
         <button class="btn btn-danger-ghost" type="button" id="finish-discard">Discard trip</button>

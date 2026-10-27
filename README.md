@@ -11,7 +11,8 @@ Driving for dollars made easier. Drive a neighborhood, tap **Green**, **Yellow**
 ## Features
 
 **Free (real estate)**
-- Sign in with an emailed 6-digit code. There are no passwords.
+- **No sign-up needed.** First-time visitors go straight into the app as a guest, and guests can drive, save trips, use Explore and save searches. A guest's work belongs to that browser until they choose **Save my work with email** from the account menu. If that email already has an account, everything the guest made moves into it. Empty guest accounts are removed after 30 days, and each network can start at most 30 guest accounts a day.
+- Or sign in with an emailed 6-digit code. There are no passwords.
 - **Drive** screen with big color buttons. Tap a color to start painting. Tap another color when the neighborhood changes, tap the same color or **Pause** to stop, and **Undo** to remove the last stretch.
 - GPS painting that skips weak fixes and GPS jumps, keeps the screen awake, and follows your location.
 - **Draw mode (✎)** for painting by tapping along streets, so you can mark areas from home or on a laptop.
@@ -81,40 +82,41 @@ Phones only allow GPS on `https://` pages or `localhost`. To try it on a phone d
 
 ## Deploy to Cloudflare
 
-There are two Workers. Both D1 databases already exist, and their IDs are in `wrangler.jsonc`.
+Production is the `green-zone` Worker. Both D1 databases already exist, and their IDs are in `wrangler.jsonc`.
 
-| Worker | Deployed from | Database | Sign-in |
+| Target | How | Database | Sign-in |
 | --- | --- | --- | --- |
-| `green-zone` (production) | `main` | `green-zone-db` | Code sent by email |
-| `green-zone-preview` | Any other branch | `green-zone-preview-db` | Code shown on screen, no email sent |
+| Production (`green-zone`) | Push to `main` via **Workers Builds** | `green-zone-db` | Code sent by email |
+| Branch Previews | Push to any other branch via Workers Builds (`npx wrangler preview`) | `green-zone-preview-db` (see `previews` in `wrangler.jsonc`) | `DEV_MODE=1` shows the code on screen |
+| Persistent demo (`green-zone-preview`) | Manual `npx wrangler deploy --env preview` | `green-zone-preview-db` | Code shown on screen |
 
-The preview is a shareable demo. Anyone with the link can sign in as any address, so don't put real data in it.
+Workers Builds is the live pipeline (Cloudflare's Git integration). It does **not** run D1 migrations — apply those before the code that needs them is deployed:
 
-### Automatic deploys (GitHub Actions)
-
-`.github/workflows/deploy.yml` runs on every push. It applies database migrations, deploys, and adds the live link to the run summary and as a **View deployment** button on the pull request. To turn it on:
-
-1. Create a Cloudflare API token: **dash.cloudflare.com → My Profile → API Tokens → Create Token**. Start from the **Edit Cloudflare Workers** template and add **Account → D1 → Edit**.
-2. In GitHub, go to **Settings → Secrets and variables → Actions** and add a repository secret named `CLOUDFLARE_API_TOKEN`.
-3. If the token can reach more than one Cloudflare account, also add `CLOUDFLARE_ACCOUNT_ID`. It's shown on the Workers & Pages overview page in the dashboard.
-4. Re-run the latest **Deploy to Cloudflare** workflow, or push a commit.
+```bash
+npx wrangler d1 migrations apply green-zone-db --remote
+```
 
 ### Manual deploy
 
 ```bash
 npx wrangler login
 npx wrangler d1 migrations apply green-zone-preview-db --remote --env preview
-npx wrangler deploy --env preview        # preview
+npx wrangler deploy --env preview        # persistent preview Worker
 npm run db:migrate:remote && npm run deploy   # production
 ```
 
 ### Before production takes real users
 
-1. **Set up email sending.** In the Cloudflare dashboard, go to **Compute → Email Service → Email Sending → Onboard Domain** and pick your domain. The domain must use Cloudflare DNS. Sending to any address requires the Workers Paid plan.
-2. **Set the sender** in `wrangler.jsonc`, under the top-level `vars`:
-   - `EMAIL_FROM`, for example `login@yourdomain.com`. It must be on the onboarded domain.
-   - `EMAIL_FROM_NAME`, for example `Green Zone`.
-   - `PRO_EMAILS`, a comma-separated list of emails that always get Pro (optional).
+Email sign-in sends from `login@greenzone.swftstudios.com`. Guest mode works without any of this.
+
+1. **Onboard the sending subdomain.** In the Cloudflare dashboard, go to **Compute → Email Service → Email Sending → Onboard Domain** and choose the subdomain `greenzone.swftstudios.com`. You may need to type it, since it doesn't need a website. Cloudflare adds the bounce MX, SPF, DKIM and DMARC records on that subdomain only, so mail you send and receive as @swftstudios.com isn't affected. Onboarding the apex domain instead would add a strict `p=reject` DMARC record to swftstudios.com if it doesn't already have one.
+   - swftstudios.com has to use Cloudflare DNS in the same Cloudflare account as the Worker.
+   - Sending to any address requires the Workers Paid plan.
+   - New accounts start with a small daily sending quota that grows with good deliverability.
+2. **Check the sender** in `wrangler.jsonc`, under the top-level `vars`:
+   - `EMAIL_FROM` is `login@greenzone.swftstudios.com`. If you change the subdomain, change it here too.
+   - `EMAIL_FROM_NAME` is the display name, for example `Green Zone`.
+   - `PRO_EMAILS` is a comma-separated list of emails that always get Pro (optional).
    - Leave `DEV_MODE` empty. If it were set, sign-in codes would be shown to anyone.
 
 ### Area data setup
@@ -152,7 +154,8 @@ All routes are under `/api` and use JSON. Everything except auth needs the sessi
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | `/api/auth/request` | `{email}` → email a sign-in code |
-| POST | `/api/auth/verify` | `{email, code}` → start a session; creates the account on first sign-in |
+| POST | `/api/auth/verify` | `{email, code}` → start a session; creates the account on first sign-in. From a guest session it turns the guest into that account, or merges the guest's data into it. |
+| POST | `/api/auth/guest` | Start a guest account and session; no email needed |
 | POST | `/api/auth/logout` | End the session |
 | GET | `/api/me` | Current user and plan |
 | GET / POST | `/api/zones` | List zones / add a zone (Pro) |

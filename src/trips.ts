@@ -169,7 +169,7 @@ export async function createTrip(
     ),
   ]);
 
-  if (body.emailSummary === true) {
+  if (body.emailSummary === true && !user.isGuest) {
     const origin = new URL(request.url).origin;
     ctx.waitUntil(
       sendTripSummary(

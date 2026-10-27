@@ -319,3 +319,10 @@ body.drive-active .leaflet-bottom { bottom: calc(190px + var(--safe-b)); }
   .tabs a { padding: .4rem .42rem; font-size: .84rem; }
   .plan-badge { padding: .2rem .45rem; font-size: .68rem; }
 }
+
+.login-guest { margin-top: 1.25rem; text-align: center; }
+.login-guest .btn-block { margin-top: .5rem; }
+.login-guest p { margin: .6rem 0 0; }
+.login-or { display: flex; align-items: center; gap: .75rem; color: var(--muted); font-size: .85rem; }
+.login-or::before, .login-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.plan-badge.guest { background: #fde68a; color: #713f12; }

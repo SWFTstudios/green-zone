@@ -195,15 +195,68 @@ $("#code-back").addEventListener("click", () => {
 });
 
 async function signIn(email, code) {
+  const wasGuest = !!state.user?.isGuest;
+  const oldDraftKey = draftKey();
   const data = await api("/api/auth/verify", { method: "POST", body: { email, code } });
   await loadSession();
+  carryDraft(oldDraftKey);
+  setSignedOut(false);
   $("#login-code").value = "";
   $("#code-form").hidden = true;
   $("#login-form").hidden = false;
   location.hash = "#/drive";
   route();
-  if (data.isNew) toast("Welcome! Tap a color to start painting.");
+  if (data.merged) toast("Signed in. Everything you made as a guest is now in your account.", 4500);
+  else if (wasGuest) toast("Your work is saved to your email now.", 4000);
+  else if (data.isNew) toast("Welcome! Tap a color to start painting.");
 }
+
+function setSignedOut(value) {
+  try {
+    if (value) localStorage.setItem("gz_signed_out", "1");
+    else localStorage.removeItem("gz_signed_out");
+  } catch {
+    /* storage blocked */
+  }
+}
+
+function signedOutBefore() {
+  try {
+    return localStorage.getItem("gz_signed_out") === "1";
+  } catch {
+    return false;
+  }
+}
+
+async function startGuest() {
+  await api("/api/auth/guest", { method: "POST" });
+  setSignedOut(false);
+  await loadSession();
+}
+
+$("#guest-btn").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  showError($("#login-error"), "");
+  try {
+    await startGuest();
+    location.hash = "#/drive";
+    route();
+    toast("You're in as a guest. Add your email from the menu any time to keep your work.", 4500);
+  } catch (err) {
+    showError($("#login-error"), err.message);
+  } finally {
+    e.target.disabled = false;
+  }
+});
+
+$("#login-back").addEventListener("click", () => {
+  location.hash = "#/drive";
+});
+
+$("#save-account-btn").addEventListener("click", () => {
+  $("#account-menu").hidden = true;
+  location.hash = "#/signin";
+});
 
 async function loadSession() {
   const { user } = await api("/api/me");
@@ -222,10 +275,15 @@ function renderAccount() {
   if (!u) return;
   const pro = u.plan === "pro";
   for (const el of [$("#plan-badge"), $("#key-plan")]) {
-    el.textContent = pro ? "Pro" : "Free";
-    el.classList.toggle("pro", pro);
+    el.textContent = u.isGuest ? "Guest" : pro ? "Pro" : "Free";
+    el.classList.toggle("pro", pro && !u.isGuest);
+    el.classList.toggle("guest", !!u.isGuest);
   }
-  $("#account-email").textContent = u.email;
+  $("#account-email").textContent = u.isGuest ? "Guest: saved in this browser only" : u.email;
+  $("#save-account-btn").hidden = !u.isGuest;
+  $("#logout-btn").textContent = u.isGuest ? "Leave guest mode" : "Sign out";
+  $("#finish-email-row").hidden = !!u.isGuest;
+  if (u.isGuest) $("#finish-email").checked = false;
   $("#upgrade-btn").textContent = pro ? "Pro features" : "Upgrade to Pro";
 }
 
@@ -240,8 +298,11 @@ document.addEventListener("click", (e) => {
 });
 $("#upgrade-btn").addEventListener("click", () => openUpgrade());
 $("#logout-btn").addEventListener("click", async () => {
-  if (state.draft && !confirm("You have a trip in progress on this device. Sign out anyway? It stays saved here for next time.")) return;
+  if (state.user?.isGuest) {
+    if (!confirm("You're using a guest account. If you leave, you won't be able to get back to its trips and saved searches. Add your email first to keep them. Leave anyway?")) return;
+  } else if (state.draft && !confirm("You have a trip in progress on this device. Sign out anyway? It stays saved here for next time.")) return;
   await api("/api/auth/logout", { method: "POST" }).catch(() => {});
+  setSignedOut(true);
   stopGps();
   state.user = null;
   state.draft = null;
@@ -261,7 +322,23 @@ function openUpgrade() {
 
 /* ---------- draft trip (persisted on this device) ---------- */
 
-const draftKey = () => `gz_draft_v1:${state.user?.email || ""}`;
+const draftKey = () => `gz_draft_v1:${state.user?.id || ""}`;
+
+/** Keeps a trip in progress when the account changes (a guest adding an email, or an older email-keyed draft). */
+function carryDraft(fromKey) {
+  try {
+    const legacy = state.user?.email ? `gz_draft_v1:${state.user.email}` : null;
+    for (const key of [fromKey, legacy]) {
+      if (!key || key === draftKey()) continue;
+      const raw = localStorage.getItem(key);
+      if (raw && !localStorage.getItem(draftKey())) localStorage.setItem(draftKey(), raw);
+      localStorage.removeItem(key);
+    }
+    state.draft = loadDraft();
+  } catch {
+    /* storage blocked: nothing to carry */
+  }
+}
 let saveTimer = null;
 
 function loadDraft() {
@@ -1090,9 +1167,29 @@ function route() {
 
   if (parts[0] === "verify") return handleVerifyLink(query);
   renderAccount();
+  if (parts[0] === "signin") {
+    const upgrading = !!state.user?.isGuest;
+    if (state.user && !upgrading) {
+      location.hash = "#/drive";
+      return;
+    }
+    explore.setContext(null);
+    state.view = "login";
+    $("#login-title").textContent = upgrading ? "Save your work" : "Green Zone";
+    $("#login-intro").hidden = upgrading;
+    $("#login-upgrade-note").hidden = !upgrading;
+    $("#login-guest").hidden = upgrading;
+    $("#login-back").hidden = !upgrading;
+    return showView("login");
+  }
   if (!state.user) {
     state.view = "login";
     explore.setContext(null);
+    $("#login-title").textContent = "Green Zone";
+    $("#login-intro").hidden = false;
+    $("#login-upgrade-note").hidden = true;
+    $("#login-guest").hidden = false;
+    $("#login-back").hidden = true;
     return showView("login");
   }
 
@@ -1139,6 +1236,12 @@ window.addEventListener("hashchange", route);
 (async function boot() {
   try {
     await loadSession();
+    if (state.user) carryDraft(null);
+    // No account needed: first-time visitors go straight in as a guest.
+    else if (!signedOutBefore() && !location.hash.startsWith("#/verify")) {
+      await startGuest();
+      if (state.user) toast("You're using Green Zone as a guest. Add your email from the menu to keep your work.", 5000);
+    }
   } catch {
     state.user = null;
   }
