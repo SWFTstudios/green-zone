@@ -1,6 +1,6 @@
 import { areaStatus, queryAreas } from "./areas";
 import { ZILLOW_DATASETS, importZillowDataset, refreshStaleZillow, staleDatasets } from "./areas/zillow";
-import { currentUser, logout, requestCode, requireUser, verifyCode } from "./auth";
+import { cleanupGuests, currentUser, logout, requestCode, requireUser, startGuest, verifyCode } from "./auth";
 import { HttpError, assertSameOrigin, errorResponse, json, readJson, sha256Hex } from "./http";
 import { createSearch, deleteSearch, getSearch, listSearches, updateSearch } from "./searches";
 import { createTrip, deleteTrip, getMap, getTrip, listTrips, updateTrip } from "./trips";
@@ -35,10 +35,19 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext): Pro
   if (path === "/api/auth/request" && method === "POST") return requestCode(request, env, await readJson(request));
   if (path === "/api/auth/verify" && method === "POST") return verifyCode(request, env, ctx, await readJson(request));
   if (path === "/api/auth/logout" && method === "POST") return logout(request, env);
+  if (path === "/api/auth/guest" && method === "POST") return startGuest(request, env);
 
   if (path === "/api/me" && method === "GET") {
     const user = await currentUser(request, env);
-    return json({ user: user && { email: user.email, plan: user.plan, createdAt: user.createdAt } });
+    return json({
+      user: user && {
+        id: user.id,
+        email: user.isGuest ? null : user.email,
+        plan: user.plan,
+        createdAt: user.createdAt,
+        isGuest: user.isGuest,
+      },
+    });
   }
 
   const user = await requireUser(request, env);
@@ -102,5 +111,6 @@ export default {
         for (const r of results) console.log(`Zillow ${r.dataset}: ${r.ok ? `${r.rows} rows (${r.month})` : r.error}`);
       }),
     );
+    ctx.waitUntil(cleanupGuests(env).then((n) => n && console.log(`Removed ${n} empty guest accounts`)));
   },
 } satisfies ExportedHandler<Env>;

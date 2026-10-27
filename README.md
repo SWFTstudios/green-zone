@@ -11,7 +11,8 @@ Driving for dollars made easier. Drive a neighborhood, tap **Green**, **Yellow**
 ## Features
 
 **Free (real estate)**
-- Sign in with an emailed 6-digit code. There are no passwords.
+- **No sign-up needed.** First-time visitors go straight into the app as a guest, and guests can drive, save trips, use Explore and save searches. A guest's work belongs to that browser until they choose **Save my work with email** from the account menu. If that email already has an account, everything the guest made moves into it. Empty guest accounts are removed after 30 days, and each network can start at most 30 guest accounts a day.
+- Or sign in with an emailed 6-digit code. There are no passwords.
 - **Drive** screen with big color buttons. Tap a color to start painting. Tap another color when the neighborhood changes, tap the same color or **Pause** to stop, and **Undo** to remove the last stretch.
 - GPS painting that skips weak fixes and GPS jumps, keeps the screen awake, and follows your location.
 - **Draw mode (✎)** for painting by tapping along streets, so you can mark areas from home or on a laptop.
@@ -152,7 +153,8 @@ All routes are under `/api` and use JSON. Everything except auth needs the sessi
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | `/api/auth/request` | `{email}` → email a sign-in code |
-| POST | `/api/auth/verify` | `{email, code}` → start a session; creates the account on first sign-in |
+| POST | `/api/auth/verify` | `{email, code}` → start a session; creates the account on first sign-in. From a guest session it turns the guest into that account, or merges the guest's data into it. |
+| POST | `/api/auth/guest` | Start a guest account and session; no email needed |
 | POST | `/api/auth/logout` | End the session |
 | GET | `/api/me` | Current user and plan |
 | GET / POST | `/api/zones` | List zones / add a zone (Pro) |
