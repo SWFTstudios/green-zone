@@ -7,6 +7,7 @@ export const GROUPS = [
   "Economy",
   "Outdoors & lighting",
   "Amenities & transit",
+  "Risk",
   "Land use",
   "Your drives",
 ];
@@ -16,6 +17,8 @@ const ACS = "Census ACS";
 const OSM = "OpenStreetMap";
 const CDC = "CDC PLACES";
 const NASA = "NASA Black Marble";
+const FEMA = "FEMA flood maps";
+const FRED = "Zillow or Census, FRED rate";
 
 export const LAND_USES = [
   "Residential",
@@ -48,6 +51,8 @@ export const METRICS = [
   { key: "zori", group: "Rentals", label: "Typical asking rent", fmt: "usdmo", source: Z, mode: "higher" },
   { key: "zoriYoY", group: "Rentals", label: "Rent change, last 12 months", fmt: "pct", source: Z, mode: "higher" },
   { key: "grossYield", group: "Rentals", label: "Gross rent yield", fmt: "pct", source: "Zillow or Census", mode: "higher", help: "A year of rent divided by the home value. Uses Zillow when available, otherwise Census medians." },
+  { key: "mortgagePayment", group: "Rentals", label: "Monthly mortgage payment", fmt: "usdmo", source: FRED, mode: "lower", help: "Principal and interest on the typical home value with 20% down, at this week's 30-year fixed rate. Taxes and insurance not included." },
+  { key: "rentCoverage", group: "Rentals", label: "Rent ÷ mortgage payment", fmt: "pct", source: FRED, mode: "higher", help: "Typical rent as a share of that mortgage payment. Above 100% means rent covers principal and interest." },
   { key: "medianRent", group: "Rentals", label: "Median gross rent", fmt: "usdmo", source: ACS, mode: "higher" },
   { key: "renterRate", group: "Rentals", label: "Homes that are rented", fmt: "pct", source: ACS, mode: "higher" },
   { key: "vacancyRate", group: "Housing stock", label: "Vacancy rate", fmt: "pct", source: ACS, mode: "lower" },
@@ -77,6 +82,7 @@ export const METRICS = [
   { key: "schools", group: "Amenities & transit", label: "Schools and libraries", fmt: "int", source: OSM, mode: "higher" },
   { key: "foodPerKm2", group: "Amenities & transit", label: "Restaurants and cafés per km²", fmt: "dec", source: OSM, mode: "higher" },
   { key: "healthcare", group: "Amenities & transit", label: "Clinics, pharmacies and hospitals", fmt: "int", source: OSM, mode: "higher" },
+  { key: "floodShare", group: "Risk", label: "Land in a FEMA flood zone", fmt: "pct", source: FEMA, mode: "lower", help: "Share of the area inside FEMA's 1%-a-year (100-year) floodplain, where lenders usually require flood insurance. 0% can also mean FEMA hasn't mapped the area digitally yet." },
   { key: "landUse", group: "Land use", label: "Main land use (mapped, not legal zoning)", fmt: "text", source: OSM, mode: "oneOf", help: "The most common land use mapped in OpenStreetMap. Check the county's zoning map before buying." },
   { key: "myRating", group: "Your drives", label: "Your drive ratings", fmt: "rating", source: "Your trips", mode: "higher", help: "From streets you painted: +100 if all green, −100 if all red." },
 ];
@@ -98,12 +104,13 @@ export const PRESETS = {
       c("litPerKm2", 2),
       c("outdoorPerKm2", 2),
       c("activeAdults", 2),
+      c("floodShare", 2),
       c("myRating", 3),
     ],
   },
   cashflow: {
     label: "Cash-flow rentals",
-    criteria: [c("grossYield", 5), c("renterRate", 3), c("vacancyRate", 3), c("zoriYoY", 2), c("unemploymentRate", 2), c("transitPerKm2", 1)],
+    criteria: [c("grossYield", 5), c("rentCoverage", 4), c("renterRate", 3), c("vacancyRate", 3), c("zoriYoY", 2), c("unemploymentRate", 2), c("transitPerKm2", 1)],
   },
   appreciation: {
     label: "Appreciation",
@@ -144,12 +151,17 @@ export const IMPORTANCE = ["Ignore", "Minor", "Some", "Important", "Very importa
 
 /* ---------- map overlays ---------- */
 
-/** Ways to color areas on the map. "score" uses the user's criteria; the rest are single measures. */
+/**
+ * Ways to color areas on the map. "score" uses the user's criteria; the rest are single measures,
+ * stretched between the 5th and 95th percentile on screen unless they set a fixed `domain`.
+ */
 export const OVERLAYS = [
   { id: "score", label: "Your criteria", short: "Score", help: "Green, yellow and red from the criteria in Explore." },
   { id: "activeAdults", label: "Active adults", short: "Active", metric: "activeAdults", source: CDC, ramp: ["#fff7bc", "#c2e699", "#78c679", "#31a354", "#006837"] },
   { id: "walkBikeRate", label: "Walk & bike commuters", short: "Walk/bike", metric: "walkBikeRate", source: ACS, ramp: ["#f1eef6", "#bdc9e1", "#74a9cf", "#2b8cbe", "#045a8d"] },
   { id: "nightLight", label: "Night brightness", short: "Night", metric: "nightLight", source: NASA, ramp: ["#000004", "#3b0f70", "#8c2981", "#de4968", "#fe9f6d", "#fcfdbf"] },
+  { id: "floodShare", label: "Flood risk", short: "Flood", metric: "floodShare", source: FEMA, domain: [0, 0.5], ramp: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"] },
+  { id: "rentCoverage", label: "Rent vs. mortgage", short: "Rent/mortgage", metric: "rentCoverage", source: "Zillow + FRED", domain: [0.5, 1.5], ramp: ["#d73027", "#fc8d59", "#fee08b", "#91cf60", "#1a9850"] },
   { id: "transitRate", label: "Transit commuters", short: "Transit", metric: "transitRate", source: ACS, ramp: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"] },
   { id: "off", label: "Off", short: "Off" },
 ];
@@ -183,8 +195,8 @@ function quantile(sorted, q) {
  */
 export function overlayColors(areas, overlay) {
   const values = areas.map((a) => a.metrics?.[overlay.metric]).filter(finite).sort((x, y) => x - y);
-  const min = quantile(values, 0.05);
-  const max = quantile(values, 0.95);
+  // A fixed domain keeps meaning where it matters (0% flood is always pale, 100% rent coverage is the midpoint).
+  const [min, max] = overlay.domain || [quantile(values, 0.05), quantile(values, 0.95)];
   const colors = new Map();
   for (const a of areas) {
     const v = a.metrics?.[overlay.metric];

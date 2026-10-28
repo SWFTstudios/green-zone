@@ -32,7 +32,7 @@ The account has about 30 other Workers and D1 databases for other projects. **On
 - `main` has Explore (PR #3, merged). **Guest mode and the real sender address are in PR #4 (open, draft), not on `main` yet.** So the live site still sends from `login@example.com`, and sign-in fails with "We couldn't send the email."
 - PR #4's **Workers Builds preview build failed** instantly (build `4d911eb4-5453-4f11-8dfe-bb0eac343b5c`). The cause is unknown; the log is only in the Cloudflare dashboard.
 - The GitHub Actions workflow `.github/workflows/deploy.yml` fails on every push because the `CLOUDFLARE_API_TOKEN` secret was never added. It duplicates what Workers Builds already does.
-- Production and preview D1 have migrations `0001_init.sql` through `0004_source_cache.sql` applied, and recorded in `d1_migrations`. There are 0 users, 0 trips and 3 failed sign-in code requests.
+- Production and preview D1 have migrations `0001_init.sql` through `0005_reviews.sql` applied, and recorded in `d1_migrations`. There are 0 users, 0 trips and 3 failed sign-in code requests.
 - **No Explore data has loaded yet:** `zillow_imports`, `zip_market` and `area_cache` are all empty. The daily cron (`23 9 * * *` UTC) hasn't run since Explore deployed.
 - **Unverified against the real services**, because the app was built in a sandbox that couldn't reach them:
   - TIGERweb layer and field names
@@ -110,8 +110,12 @@ Note for the owner: because PR previews share the production database, a preview
 
 **4.1 `ADMIN_TOKEN`.** Generate a random value (32+ bytes), set it with `npx wrangler secret put ADMIN_TOKEN` (production, no `--env`), and hand it to the owner privately. It unlocks `POST /api/admin/zillow-import`.
 
-**4.2 `CENSUS_API_KEY`.** **HUMAN:** request a free key at https://api.census.gov/data/key_signup.html. Then set it with `npx wrangler secret put CENSUS_API_KEY`. Without a key, Census allows about 500 calls a day, which Explore will exceed.
-- *Check:* `npx wrangler secret list` shows both secrets.
+**4.2 `CENSUS_API_KEY`.** **HUMAN:** request a free key at https://api.census.gov/data/key_signup.html. Then set it with `npx wrangler secret put CENSUS_API_KEY`. The Census API now rejects keyless requests, so Explore has no Census numbers without it.
+
+**4.3 `REVIEW_TO`.** **HUMAN:** the inbox that receives reviews. Set it with `npx wrangler secret put REVIEW_TO`. Never put the address in `wrangler.jsonc`, the docs or a PR: the repo is public.
+
+**4.4 `RENTCAST_API_KEY` (optional).** Turns on the "Market now" listings snapshot in area details. RentCast is metered; the app caps itself at 45 calls a month (`RENTCAST_MONTHLY_LIMIT`).
+- *Check:* `npx wrangler secret list` shows `ADMIN_TOKEN`, `CENSUS_API_KEY` and `REVIEW_TO`.
 
 ## Phase 5: Load and validate real Explore data
 
@@ -138,6 +142,8 @@ curl -s -X POST "https://green-zone.elombe.workers.dev/api/admin/zillow-import?d
   - Census: `medianIncome`, `vacancyRate`
   - OpenStreetMap: `litPerKm2`, `parks`
   - ZIP and Zillow: `zip`, `zhvi`
+  - FEMA: `floodShare` (most tracts are 0; tracts along rivers or the coast should not all be 0)
+  - FRED: `mortgagePayment`, `rentCoverage`
 
   `missing` should be `[]`.
 - Each source has assumptions to fix in code if they turn out wrong:
@@ -147,6 +153,8 @@ curl -s -X POST "https://green-zone.elombe.workers.dev/api/admin/zillow-import?d
 | TIGERweb | Layers are found by name: `/^Census Tracts$/` in `Tracts_Blocks`, `/ZIP Code Tabulation/` in `PUMA_TAD_TAZ_UGA_ZCTA`. Tract fields are `GEOID`, `NAME`, `BASENAME`, `AREALAND`, `INTPTLAT`, `INTPTLON`. ZIP field is one of `ZCTA5`, `ZCTA5CE20`, `GEOID`, `BASENAME`. | `src/areas/tiger.ts`. Inspect `…/MapServer?f=json` and `…/MapServer/<id>?f=json`. |
 | Census ACS | 5-year table IDs in `ACS_VARIABLES`. The year falls back from the current year minus 2 by up to two more years (override with the `ACS_YEAR` var). | `src/areas/acs.ts`, `src/areas/index.ts` |
 | Overpass | One query per batch of up to 30 tracts, a box of at most 0.12°, 60 s timeout, `out center qt`. Public `overpass-api.de` may rate-limit (429). | `src/areas/osm.ts`; batch size in `src/areas/index.ts` (`METRICS_PER_REQUEST`, `OSM_SPAN_CAP_DEG`). With heavy use, set the `OVERPASS_URL` var to another instance. |
+| FEMA NFHL | `…/NFHL/MapServer/export` draws layer 28 ("Flood Hazard Zones") filtered with `layerDefs` to `SFHA_TF = 'T'`, as a transparent PNG at about 12 m a pixel. If every tract is 0 near a river, check that the layer id and field still match `…/MapServer?f=json`. | `src/areas/flood.ts` |
+| FRED | `fredgraph.csv?id=MORTGAGE30US` returns `observation_date,MORTGAGE30US` rows. | `src/areas/mortgage.ts` |
 | CPU | Building metrics does point-in-polygon work in the Worker. | If logs show exceeded CPU, lower `METRICS_PER_REQUEST`, or raise `limits.cpu_ms` in `wrangler.jsonc` (Paid plan). |
 
 - *Check:* in the browser, **Explore** in a real city shows colored tracts with "N of N areas on screen ready", and an area's detail shows Census, Zillow and OpenStreetMap numbers.
@@ -155,7 +163,8 @@ curl -s -X POST "https://green-zone.elombe.workers.dev/api/admin/zillow-import?d
 
 Run the following on the live site, on a phone if possible. Record anything broken as a GitHub issue with steps to reproduce.
 
-1. **Fresh browser:** you land on Drive as a **Guest**, with a toast explaining guest mode.
+1. **Landing page:** `/` shows the landing page. The scoring sliders recolor the sample grid. **Leave a review** sends a review, and it arrives in the `REVIEW_TO` inbox (`SELECT rating, emailed_at FROM reviews` shows `emailed_at` set). **Open the app** goes to `/app`.
+1. **Fresh browser:** `/app` starts you as a **Guest**, with a toast explaining guest mode, and the first-run tour opens. Step through it; the account menu's **Take the tour** replays it, and **How to use Green Zone** opens the guide with the map key.
 2. **Painting:** tap **Green**, then walk or drive, or use **✎ Draw** and tap the map. Switch to **Red**, use **Add note**, then **Finish trip**. The "Email me a summary" option is hidden for guests. Save, and the trip page opens.
 3. **Lists:** **Trips** and **My map** show the drive.
 4. **Explore:**
@@ -166,6 +175,7 @@ Run the following on the live site, on a phone if possible. Record anything brok
    - Save a search, reload, reopen it from **Saved searches**, then rename and delete it.
 5. **Map layers:**
    - In Explore, open **Layers** and switch each "Color neighborhoods by" option. The legend changes, and Active adults, Walk & bike and Night brightness show a spread of colors rather than one flat color. If one is flat or gray, look under **About this data** for a CDC or night-lights notice.
+   - Switch to **Flood risk** and **Rent vs. mortgage**. Turn on **Flood zones** imagery and zoom in near a river: blue floodplain appears.
    - Turn on **Night lights imagery**, switch to **Satellite**, and tap **3D**.
    - Turn on **Also show on Drive**. On Drive, the area colors show faintly, and tapping one opens a card.
    - Type in the place box, and suggestions appear.

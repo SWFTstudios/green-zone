@@ -8,10 +8,21 @@ Driving for dollars made easier. Drive a neighborhood, tap **Green**, **Yellow**
 | 🟨 Yellow zone | Mixed or changing. Some vacant or run-down houses, so use caution. Could be an opportunity. |
 | 🟥 Red zone | Sketchy. I wouldn't feel safe walking here or letting my kids play outside. Lots of boarded-up or abandoned properties. |
 
+## Pages
+
+- **`/`** is the landing page: what Green Zone is, how it works, a live scoring demo, the map key, the data sources, pricing, FAQ and a **Leave a review** popup. Old links such as `/#/trips/123` redirect to the app.
+- **`/app`** is the app itself (installable; the home-screen icon opens here).
+- Reviews are stored in D1 and emailed to the inbox in the `REVIEW_TO` secret. The address never appears in the page or the repo. Replies go straight to the reviewer when they leave an email.
+
 ## Features
 
+**Getting started**
+- A **first-run tour** walks new users through the color buttons, notes, Draw mode, Explore, Layers, the Key page and the account menu. **Take the tour** in the account menu replays it.
+- **How to use Green Zone** (`/app#/guide`, in the account menu) covers driving, Explore, trips, the key, accounts and tips, plus a full **map key**: painted lines, pins, neighborhood colors, dashed must-have outlines, every layer's color ramp and the map buttons.
+- After a user's second finished trip, the app asks once for a review.
+
 **Free (real estate)**
-- **No sign-up needed.** First-time visitors go straight into the app as a guest, and guests can drive, save trips, use Explore and save searches. A guest's work belongs to that browser until they choose **Save my work with email** from the account menu. If that email already has an account, everything the guest made moves into it. Empty guest accounts are removed after 30 days, and each network can start at most 30 guest accounts a day.
+- **No sign-up needed.** Opening `/app` for the first time starts a guest account, and guests can drive, save trips, use Explore and save searches. A guest's work belongs to that browser until they choose **Save my work with email** from the account menu. If that email already has an account, everything the guest made moves into it. Empty guest accounts are removed after 30 days, and each network can start at most 30 guest accounts a day.
 - Or sign in with an emailed 6-digit code. There are no passwords.
 - **Drive** screen with big color buttons. Tap a color to start painting. Tap another color when the neighborhood changes, tap the same color or **Pause** to stop, and **Undo** to remove the last stretch.
 - GPS painting that skips weak fixes and GPS jumps, keeps the screen awake, and follows your location.
@@ -38,7 +49,9 @@ Driving for dollars made easier. Drive a neighborhood, tap **Green**, **Yellow**
   - Walk and bike commuters (Census ACS)
   - Night brightness (NASA Black Marble)
   - Transit commuters (Census ACS)
-- The Layers menu also turns on the NASA night-lights imagery and sets the overlay's opacity.
+  - Flood risk (FEMA)
+  - Rent vs. mortgage (Zillow or Census, with FRED's mortgage rate)
+- The Layers menu also turns on NASA night-lights imagery and FEMA flood-zone imagery, and sets the overlay's opacity.
 - A legend shows the current layer and its range. On desktop, hovering an area shows its name and score.
 - The place search suggests addresses, neighborhoods and cities as you type, using [Photon](https://photon.komoot.io/).
 
@@ -57,9 +70,14 @@ Driving for dollars made easier. Drive a neighborhood, tap **Green**, **Yellow**
 | How people get to work: walk or bike, transit, work from home | Census ACS 5-year, table B08301 | Tract | A free stand-in for "where people are out on foot". Shares count only people who travel to work. |
 | Active adults (share of adults who got physical activity outside work in the past month) | [CDC PLACES](https://www.cdc.gov/places/) via data.cdc.gov | Tract | Model-based estimate, 100% minus the "no leisure-time physical activity" measure. Refreshed yearly; cached 90 days. |
 | Night brightness | [NASA Black Marble](https://blackmarble.gsfc.nasa.gov/) (VIIRS) tiles from [NASA GIBS](https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api) | Tract | Average brightness of the 2016 composite inside each tract, 0–100. Also shown as map imagery. |
+| Share of each tract in the 1%-a-year (100-year) floodplain, plus a flood-zone map layer | [FEMA National Flood Hazard Layer](https://hazards.fema.gov/femaportal/wps/portal/NFHLWMS) | Tract | One map export per batch of tracts, filtered to the Special Flood Hazard Area, then the drawn pixels inside each tract are counted. 0% can also mean an area isn't mapped digitally yet. |
+| Monthly mortgage payment and rent ÷ payment | [FRED](https://fred.stlouisfed.org/series/MORTGAGE30US) 30-year fixed rate (Freddie Mac) | Tract | Keyless CSV, cached 12 hours. Principal and interest on the typical home value with 20% down; taxes and insurance not included. |
+| Optional: homes for sale, list prices, days on market, rentals listed | [RentCast](https://www.rentcast.io/api) market statistics | ZIP | Only when `RENTCAST_API_KEY` is set. Shown in an area's details, cached 30 days per ZIP, capped at `RENTCAST_MONTHLY_LIMIT` calls a month (default 45, inside the free plan's 50). |
 | Tract and ZIP boundaries | [Census TIGERweb](https://tigerweb.geo.census.gov/) | Tract, ZCTA | Layers are looked up by name. |
 | Outdoor activity (parks, trails, fitness spots), street lighting (lit streets, street lamps), transit, grocery, schools, restaurants, healthcare, land use | [OpenStreetMap](https://www.openstreetmap.org/) via Overpass | Tract | Crowd-mapped, so coverage varies by city. |
 | Your drive ratings | Your own trips | Tract | Computed in the browser and visible only to you. |
+
+The FEMA, FRED and RentCast sources were chosen from the free integrations in [agentic-ops/real-estate-mcp](https://github.com/agentic-ops/real-estate-mcp). That project is AGPL-3.0, so no code was copied; Green Zone calls the same public APIs with its own code. Its other integrations were left out: FBI crime data only covers whole police agencies, Walk Score needs a key and its terms limit storing scores, EPA's lookup is by state, NOAA is weather, and its Zillow adapter needs a paid data license.
 
 What isn't included, and why:
 - **Strava.** Strava's API terms (since November 2024) only allow showing an athlete's data to that athlete, and rule out aggregate heatmaps and analytics. "Where people work out outside" comes from CDC PLACES activity estimates, Census walk and bike commuting, and OpenStreetMap parks, trails and fitness spots instead.
@@ -141,11 +159,24 @@ Email sign-in sends from `login@greenzone.swftstudios.com`. Guest mode works wit
   curl -X POST "https://<your-worker>/api/admin/zillow-import?dataset=next" -H "Authorization: Bearer <token>"
   ```
   Each call imports the next stale dataset and lists what's left. Import status, including any error such as a changed Zillow file path, appears under **Explore → About this data**. If Zillow moves its CSVs, update the paths in `src/areas/zillowCsv.ts`, or point `ZILLOW_BASE_URL` at a mirror.
-- **Census key (recommended):** without a key the Census API allows about 500 calls a day. Get a free key at https://api.census.gov/data/key_signup.html and run `npx wrangler secret put CENSUS_API_KEY`.
-- **Overpass:** the public `overpass-api.de` instance has a fair-use limit. With heavy traffic, set `OVERPASS_URL` to your own or a commercial instance.
+- **Census key (required):** the Census API now rejects requests without a key, and Explore shows "Census ACS: API key missing or invalid" until one is set. Get a free key at https://api.census.gov/data/key_signup.html and run `npx wrangler secret put CENSUS_API_KEY`.
+- **Overpass:** the app tries `overpass-api.de`, then the `private.coffee` and `kumi.systems` mirrors. Set `OVERPASS_URL` to a comma-separated list to use your own or a commercial instance.
+- **Zillow on preview links:** preview versions use the preview database and don't run the daily import. Explore → **About this data** shows **Load Zillow data now** there (and anywhere before the first import), which loads the nine datasets one at a time.
+- **FEMA and FRED** need no setup. `FEMA_NFHL_URL` and `FRED_CSV_URL` point them at mirrors.
+- **RentCast (optional):** `npx wrangler secret put RENTCAST_API_KEY` turns on the "Market now" section in area details.
 - **CDC PLACES** works without a key. For higher limits, create a free Socrata app token at data.cdc.gov and run `npx wrangler secret put SOCRATA_APP_TOKEN`. When CDC publishes a new PLACES release, set `CDC_PLACES_DATASET` to its dataset id.
 - **Night lights** use the NASA GIBS tile URL in `src/areas/index.ts`. Set `NIGHT_LIGHTS_TILES` (with `{z}`, `{y}`, `{x}`) and `NIGHT_LIGHTS_ZOOM` to use another source.
 - Area scoring needs the **Workers Paid** plan. The free plan's 10 ms CPU limit is too small for building tract metrics and importing Zillow CSVs.
+
+### Reviews
+
+Set the inbox that should receive reviews as a secret, so it stays out of this public repo and the page:
+
+```bash
+npx wrangler secret put REVIEW_TO
+```
+
+Until it's set, reviews are still saved in the `reviews` table (`emailed_at` stays empty). Each network can send 5 reviews a day, and a hidden honeypot field drops bot submissions.
 
 ### Giving someone Pro
 
@@ -186,7 +217,10 @@ All routes are under `/api` and use JSON. Everything except auth needs the sessi
 | GET / PATCH / DELETE | `/api/trips/:id` | Trip with segments and pins / edit name, notes and key notes / delete |
 | GET | `/api/map` | Every segment and pin for the "My map" view |
 | POST | `/api/areas` | `{bbox: "w,s,e,n", have?: [geoid]}` → tracts in view with metrics; repeat while `pending > 0` |
-| GET | `/api/areas/status` | Which Zillow datasets are loaded, and cache counts |
+| GET | `/api/areas/status` | Which Zillow datasets are loaded, cache counts, the mortgage rate, and the flood and night-lights tile URLs |
+| POST | `/api/areas/market-load` | Import the next stale Zillow dataset (previews, or before the first import) |
+| GET | `/api/areas/market/:zip` | RentCast listings snapshot for a ZIP (only with `RENTCAST_API_KEY`) |
+| POST | `/api/reviews` | `{rating 1–5, message, name?, email?, source}` → store the review and email it to `REVIEW_TO`; no sign-in needed |
 | GET / POST | `/api/searches` | List saved searches / save one (`name`, `criteria`, `view`, `results`) |
 | GET / PATCH / DELETE | `/api/searches/:id` | Open / update or rename / delete a saved search |
 | POST | `/api/admin/zillow-import?dataset=<id\|next>` | Import one Zillow dataset now (needs `Authorization: Bearer $ADMIN_TOKEN`) |

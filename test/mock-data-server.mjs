@@ -1,7 +1,7 @@
 // Offline stand-in for TIGERweb, the Census API, Overpass and Zillow's CSVs, for local development
 // and tests. It serves a synthetic grid of tracts around Philadelphia with made-up numbers.
 //   node test/mock-data-server.mjs [port]
-// then point TIGERWEB_URL, CENSUS_API_URL, OVERPASS_URL and ZILLOW_BASE_URL in .dev.vars at it.
+// then point TIGERWEB_URL, CENSUS_API_URL, OVERPASS_URL, ZILLOW_BASE_URL and the other *_URL settings in .dev.vars at it.
 import http from "node:http";
 import { encode } from "fast-png";
 
@@ -165,6 +165,50 @@ function nightTile(z, x, y) {
   return Buffer.from(encode({ width: size, height: size, data, channels: 4, depth: 8 }));
 }
 
+// FEMA floodplain export: a band along a made-up river through the north of the grid.
+const riverLat = (lng) => 39.985 + 0.01 * Math.sin((lng + 75.2) * 40);
+function femaExport(params) {
+  const [w, s, e, n] = (params.get("bbox") || "").split(",").map(Number);
+  const [width, height] = (params.get("size") || "256,256").split(",").map(Number);
+  const mercator = params.get("bboxSR") === "3857";
+  const toLng = (x) => (mercator ? (x / 6378137) * (180 / Math.PI) : x);
+  const toLat = (y) => (mercator ? (Math.atan(Math.sinh(y / 6378137)) * 180) / Math.PI : y);
+  const data = new Uint8Array(width * height * 4);
+  for (let py = 0; py < height; py++) {
+    const lat = toLat(n - ((py + 0.5) / height) * (n - s));
+    for (let px = 0; px < width; px++) {
+      const lng = toLng(w + ((px + 0.5) / width) * (e - w));
+      if (Math.abs(lat - riverLat(lng)) < 0.004) data.set([30, 110, 220, 170], (py * width + px) * 4);
+    }
+  }
+  return Buffer.from(encode({ width, height, data, channels: 4, depth: 8 }));
+}
+
+function rentcastMarket(zip) {
+  const k = Number(zip.slice(-2));
+  return {
+    id: zip,
+    zipCode: zip,
+    saleData: {
+      lastUpdatedDate: "2026-10-20T00:00:00.000Z",
+      averagePrice: 300000 + k * 900,
+      medianPrice: 285000 + k * 850,
+      medianPricePerSquareFoot: 190 + k,
+      medianDaysOnMarket: 21 + (k % 9),
+      newListings: 12 + (k % 5),
+      totalListings: 60 + k,
+    },
+    rentalData: {
+      lastUpdatedDate: "2026-10-20T00:00:00.000Z",
+      averageRent: 1600 + k * 4,
+      medianRent: 1550 + k * 4,
+      medianDaysOnMarket: 18,
+      newListings: 9,
+      totalListings: 40 + (k % 13),
+    },
+  };
+}
+
 function zillowCsv(path) {
   const months = Array.from({ length: 24 }, (_, k) => {
     const d = new Date(Date.UTC(2024, 9 + k, 1));
@@ -219,6 +263,15 @@ const server = http.createServer((req, res) => {
     const [z, y, x] = night.slice(1).map(Number);
     res.writeHead(200, { "content-type": "image/png", "access-control-allow-origin": "*" });
     return res.end(nightTile(z, x, y));
+  }
+  if (p === "/fema/export") {
+    res.writeHead(200, { "content-type": "image/png", "access-control-allow-origin": "*" });
+    return res.end(femaExport(url.searchParams));
+  }
+  if (p === "/fred.csv") return send(200, "observation_date,MORTGAGE30US\n2026-10-08,6.34\n2026-10-15,.\n2026-10-22,6.27\n", "text/csv");
+  if (p === "/rentcast/markets") {
+    if (req.headers["x-api-key"] !== "test-rentcast") return send(401, { message: "bad key" });
+    return send(200, rentcastMarket(url.searchParams.get("zipCode") || "00000"));
   }
   if (p.startsWith("/zillow/")) {
     if (p.includes("bdrmcnt_5")) return send(404, "Not Found", "text/plain");

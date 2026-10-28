@@ -1,7 +1,8 @@
 import type { User } from "../auth";
 import { HttpError, json, readJson } from "../http";
 import { type AcsMetrics, acsUrl, parseAcsResponse } from "./acs.ts";
-import { SourceError, USER_AGENT, fetchJson } from "./fetch";
+import { SourceError, fetchChecked, fetchJson, fetchText } from "./fetch";
+import { DEFAULT_FEMA_NFHL, exportSize, floodExportUrl, floodTileTemplate, sampleCoverage } from "./flood.ts";
 import {
   type AreaGeometry,
   type BBox,
@@ -15,9 +16,11 @@ import {
 import { decode } from "fast-png";
 import { type DecodedTile, sampleNightLights, tileUrl, tilesForBBox } from "./nightlights.ts";
 import { type OsmCounts, type OsmElement, aggregateOsm, landUseSummary, overpassQuery } from "./osm.ts";
+import { DEFAULT_FRED_CSV, type MortgageRate, monthlyPayment, parseFredCsv } from "./mortgage.ts";
 import { parsePlaces, placesUrl } from "./places.ts";
+import { DEFAULT_RENTCAST, type MarketSnapshot, parseRentcastMarket, rentcastMarketUrl } from "./rentcast.ts";
 import { type Tract, fetchTracts, fetchZctas } from "./tiger";
-import { ZILLOW_DATASETS, importStatus } from "./zillow";
+import { ZILLOW_DATASETS, canSelfImport, importStatus } from "./zillow";
 
 const TILE_DEG = 0.1;
 const MAX_SPAN_DEG = 0.6;
@@ -29,14 +32,21 @@ const PARTIAL_RETRY_MS = 15 * 60 * 1000;
 const ACS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const PLACES_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_CENSUS = "https://api.census.gov/data";
-const DEFAULT_OVERPASS = "https://overpass-api.de/api/interpreter";
+const DEFAULT_OVERPASS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+].join(",");
 const DEFAULT_PLACES = "https://data.cdc.gov";
 const DEFAULT_PLACES_DATASET = "cwsq-ngmh";
 export const DEFAULT_NIGHT_TILES =
   "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png";
 const MAX_NIGHT_TILES = 4;
+const RATE_TTL_MS = 12 * 60 * 60 * 1000;
+const RENTCAST_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const RENTCAST_MONTHLY_LIMIT = 45;
 /** Bump when the shape of cached metrics changes, so tracts are recomputed. */
-const METRICS_VERSION = 2;
+const METRICS_VERSION = 3;
 /** Bump when ACS_VARIABLES change, so cached county responses are refetched. */
 const ACS_CACHE_VERSION = 2;
 
@@ -76,6 +86,7 @@ export interface CachedMetrics extends Partial<AcsMetrics> {
   landUseMix: Record<string, number> | null;
   activeAdults: number | null;
   nightLight: number | null;
+  floodShare: number | null;
   missing: string[];
   v: number;
 }
@@ -147,6 +158,8 @@ async function countyAcs(env: Env, county: string): Promise<{ year: string; data
       return { year, data };
     } catch (err) {
       lastError = err;
+      // An older year won't fix a key problem.
+      if (err instanceof Error && /API key/.test(err.message)) break;
     }
   }
   if (cached) return { year: cachedYear, data: JSON.parse(cached.data) };
@@ -182,44 +195,75 @@ export function nightTileTemplate(env: Env): { url: string; zoom: number } {
   return { url: env.NIGHT_LIGHTS_TILES || DEFAULT_NIGHT_TILES, zoom: Number(env.NIGHT_LIGHTS_ZOOM) || 8 };
 }
 
+async function fetchPng(source: string, url: string, timeoutMs = 20000): Promise<DecodedTile> {
+  const res = await fetchChecked(source, url, {}, timeoutMs);
+  const type = res.headers.get("content-type") || "";
+  // Map services report errors as JSON or HTML with a 200 status.
+  if (type && !type.includes("image")) throw new SourceError(source, `unexpected response ${(await res.text()).slice(0, 160).replace(/\s+/g, " ")}`);
+  let png: ReturnType<typeof decode>;
+  try {
+    png = decode(new Uint8Array(await res.arrayBuffer()));
+  } catch {
+    throw new SourceError(source, "image could not be read");
+  }
+  return { width: png.width, height: png.height, channels: png.channels, data: png.data, palette: png.palette };
+}
+
 /** NASA night-lights brightness (0–100) per tract, from the overlay's own PNG tiles. */
 async function nightLights(env: Env, tracts: Tract[], union: BBox): Promise<Map<string, number>> {
   const { url, zoom } = nightTileTemplate(env);
   const coords = tilesForBBox(union, zoom);
   if (coords.length > MAX_NIGHT_TILES) throw new SourceError("NASA night lights", "area too large");
   const tiles = await Promise.all(
-    coords.map(async ({ x, y }) => {
-      const src = tileUrl(url, zoom, x, y);
-      let res: Response;
-      try {
-        res = await fetch(src, { headers: { "user-agent": USER_AGENT }, signal: AbortSignal.timeout(20000) });
-      } catch {
-        throw new SourceError("NASA night lights", "unreachable");
-      }
-      if (!res.ok) throw new SourceError("NASA night lights", `HTTP ${res.status}`);
-      const png = decode(new Uint8Array(await res.arrayBuffer()));
-      const img: DecodedTile = { width: png.width, height: png.height, channels: png.channels, data: png.data, palette: png.palette };
-      return { x, y, z: zoom, img };
-    }),
+    coords.map(async ({ x, y }) => ({ x, y, z: zoom, img: await fetchPng("NASA night lights", tileUrl(url, zoom, x, y)) })),
   );
   return sampleNightLights(tiles, tracts);
 }
 
+export function femaBase(env: Env): string {
+  return env.FEMA_NFHL_URL || DEFAULT_FEMA_NFHL;
+}
+
+/** Share of each tract inside FEMA's 1%-a-year floodplain, from one map export over the batch. */
+async function floodShares(env: Env, tracts: Tract[], union: BBox): Promise<Map<string, number>> {
+  const img = await fetchPng("FEMA flood zones", floodExportUrl(femaBase(env), union, exportSize(union)), 45000);
+  return sampleCoverage(img, union, tracts);
+}
+
+/** The latest 30-year mortgage rate, refreshed twice a day. */
+export function mortgageRate(env: Env): Promise<MortgageRate> {
+  return cached(env, "fred:MORTGAGE30US", RATE_TTL_MS, async () => {
+    const rate = parseFredCsv(await fetchText("FRED mortgage rate", env.FRED_CSV_URL || DEFAULT_FRED_CSV));
+    if (!rate) throw new SourceError("FRED mortgage rate", "no rate in the download");
+    return rate;
+  });
+}
+
+/** Tries each Overpass server in turn; public instances often rate-limit or time out. */
 async function overpass(env: Env, bbox: BBox): Promise<OsmElement[]> {
-  const data = await fetchJson<{ elements?: OsmElement[]; remark?: string }>(
-    "OpenStreetMap (Overpass)",
-    env.OVERPASS_URL || DEFAULT_OVERPASS,
-    {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: `data=${encodeURIComponent(overpassQuery(bbox))}`,
-    },
-    70000,
-  );
-  if (data.remark && /error|timeout|out of memory/i.test(data.remark) && !data.elements?.length) {
-    throw new SourceError("OpenStreetMap (Overpass)", data.remark.slice(0, 160));
+  const servers = (env.OVERPASS_URL || DEFAULT_OVERPASS).split(",").map((s) => s.trim()).filter(Boolean);
+  let lastError: unknown;
+  for (const server of servers) {
+    try {
+      const data = await fetchJson<{ elements?: OsmElement[]; remark?: string }>(
+        "OpenStreetMap (Overpass)",
+        server,
+        {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: `data=${encodeURIComponent(overpassQuery(bbox))}`,
+        },
+        servers.length > 1 ? 45000 : 70000,
+      );
+      if (data.remark && /error|timeout|out of memory/i.test(data.remark) && !data.elements?.length) {
+        throw new SourceError("OpenStreetMap (Overpass)", data.remark.slice(0, 160));
+      }
+      return data.elements || [];
+    } catch (err) {
+      lastError = err;
+    }
   }
-  return data.elements || [];
+  throw lastError;
 }
 
 function toTract(row: AreaRow): Tract {
@@ -244,7 +288,7 @@ async function computeMetrics(env: Env, tracts: Tract[], notices: Set<string>): 
     notices.add(err instanceof Error ? err.message : `${label} unavailable`);
     return null;
   };
-  const [acsResults, osmResult, zctaResult, placesResults, nightResult] = await Promise.all([
+  const [acsResults, osmResult, zctaResult, placesResults, nightResult, floodResult] = await Promise.all([
     Promise.allSettled(counties.map((c) => countyAcs(env, c))),
     overpass(env, union).then(
       (elements) => aggregateOsm(elements, tracts),
@@ -256,6 +300,7 @@ async function computeMetrics(env: Env, tracts: Tract[], notices: Set<string>): 
     fetchZctas(env, union).catch(fail("ZIP boundaries")),
     Promise.allSettled(counties.map((c) => countyPlaces(env, c))),
     nightLights(env, tracts, union).catch(fail("NASA night lights")),
+    floodShares(env, tracts, union).catch(fail("FEMA flood zones")),
   ]);
   const placesByCounty = new Map<string, Record<string, number>>();
   placesResults.forEach((r, i) => {
@@ -279,6 +324,7 @@ async function computeMetrics(env: Env, tracts: Tract[], notices: Set<string>): 
     if (!zctaResult) missing.push("zip");
     if (!placesByCounty.has(t.county)) missing.push("cdc");
     if (!nightResult) missing.push("night");
+    if (!floodResult) missing.push("flood");
     out.set(t.geoid, {
       ...(acs || {}),
       zip: zctaResult ? (findContaining(zctaResult, t.lng, t.lat)?.zip ?? null) : null,
@@ -288,6 +334,7 @@ async function computeMetrics(env: Env, tracts: Tract[], notices: Set<string>): 
       ...osmMetrics(osmResult?.get(t.geoid), t.areaKm2),
       activeAdults: placesByCounty.get(t.county)?.[t.geoid] ?? null,
       nightLight: nightResult?.get(t.geoid) ?? null,
+      floodShare: floodResult?.get(t.geoid) ?? null,
       missing,
       v: METRICS_VERSION,
     });
@@ -381,9 +428,12 @@ interface ZipRow {
   zori_month: string | null;
 }
 
-function withMarket(m: CachedMetrics, z: ZipRow | undefined) {
+function withMarket(m: CachedMetrics, z: ZipRow | undefined, rate: MortgageRate | null) {
   const zhvi = z?.zhvi ?? null;
   const zori = z?.zori ?? null;
+  const price = zhvi ?? m.medianHomeValue ?? null;
+  const rent = zori ?? m.medianRent ?? null;
+  const payment = rate && price ? Math.round(monthlyPayment(price, rate.rate)) : null;
   const grossYield =
     zhvi && zori
       ? round((zori * 12) / zhvi, 4)
@@ -407,6 +457,8 @@ function withMarket(m: CachedMetrics, z: ZipRow | undefined) {
     zoriYoY: z?.zori_yoy ?? null,
     zillowMonth: z?.zhvi_month ?? z?.zori_month ?? null,
     grossYield,
+    mortgagePayment: payment,
+    rentCoverage: payment && rent ? round(rent / payment, 3) : null,
   };
 }
 
@@ -470,7 +522,13 @@ export async function queryAreas(request: Request, env: Env, _user: User): Promi
 
   const metricsByGeoid = new Map(rows.map((r) => [r.geoid, r.metrics ? (JSON.parse(r.metrics) as CachedMetrics) : null]));
   const zips = [...new Set([...metricsByGeoid.values()].flatMap((m) => (m?.zip ? [m.zip] : [])))];
-  const market = await marketByZip(env, zips);
+  const [market, rate] = await Promise.all([
+    marketByZip(env, zips),
+    mortgageRate(env).catch((err) => {
+      notices.add(err instanceof Error ? err.message : "Mortgage rate unavailable");
+      return null;
+    }),
+  ]);
   const partial = rows.filter((r) => {
     const m = metricsByGeoid.get(r.geoid);
     return m && m.missing?.length;
@@ -483,7 +541,7 @@ export async function queryAreas(request: Request, env: Env, _user: User): Promi
         geoid: r.geoid,
         name: r.name,
         ...(have.has(r.geoid) ? {} : { geometry: JSON.parse(r.geometry) }),
-        metrics: m ? withMarket(m, m.zip ? market.get(m.zip) : undefined) : null,
+        metrics: m ? withMarket(m, m.zip ? market.get(m.zip) : undefined, rate) : null,
       };
     }),
     pending: Math.max(0, stale.length - computed) + tilesPending,
@@ -505,6 +563,46 @@ export async function areaStatus(env: Env): Promise<Response> {
     }),
     zips: counts?.zips ?? 0,
     areasCached: counts?.areas ?? 0,
+    canLoadMarket: await canSelfImport(env),
     nightLights: nightTileTemplate(env),
+    floodTiles: floodTileTemplate(femaBase(env)),
+    mortgageRate: await mortgageRate(env).catch(() => null),
+    rentcast: !!env.RENTCAST_API_KEY,
   });
+}
+
+/**
+ * GET /api/areas/market/:zip  RentCast listings snapshot for one ZIP, if a RentCast key is set.
+ * Cached for 30 days per ZIP, and capped per month to stay inside the plan.
+ */
+export async function marketSnapshot(env: Env, zip: string): Promise<Response> {
+  if (!env.RENTCAST_API_KEY) throw new HttpError(404, "Market snapshots aren't switched on.", "not_found");
+  if (!/^\d{5}$/.test(zip)) throw new HttpError(400, "ZIP must be 5 digits.", "validation");
+  const key = `rentcast:${zip}`;
+  const hit = await env.DB.prepare("SELECT data, fetched_at FROM source_cache WHERE key = ?").bind(key).first<{ data: string; fetched_at: number }>();
+  if (hit && Date.now() - hit.fetched_at < RENTCAST_TTL_MS) return json({ snapshot: JSON.parse(hit.data) as MarketSnapshot, cached: true });
+
+  const month = new Date().toISOString().slice(0, 7);
+  const limit = Number(env.RENTCAST_MONTHLY_LIMIT) || RENTCAST_MONTHLY_LIMIT;
+  const counter = await env.DB.prepare(
+    `INSERT INTO source_cache (key, data, fetched_at) VALUES (?, '1', ?)
+     ON CONFLICT(key) DO UPDATE SET data = CAST(data AS INTEGER) + 1 WHERE CAST(source_cache.data AS INTEGER) < ?`,
+  )
+    .bind(`rentcast:calls:${month}`, Date.now(), limit)
+    .run();
+  if (!(counter.meta.changes ?? 0)) {
+    if (hit) return json({ snapshot: JSON.parse(hit.data) as MarketSnapshot, cached: true, stale: true });
+    throw new HttpError(429, "This month's market snapshots are used up. They reset next month.", "rate_limited");
+  }
+  const body = await fetchJson<unknown>("RentCast", rentcastMarketUrl(env.RENTCAST_URL || DEFAULT_RENTCAST, zip), {
+    headers: { "X-Api-Key": env.RENTCAST_API_KEY },
+  });
+  const snapshot = parseRentcastMarket(zip, body);
+  await env.DB.prepare(
+    `INSERT INTO source_cache (key, data, fetched_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at`,
+  )
+    .bind(key, JSON.stringify(snapshot), Date.now())
+    .run();
+  return json({ snapshot, cached: false });
 }

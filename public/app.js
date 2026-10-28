@@ -1,6 +1,8 @@
 /* Green Zone client: paint streets by color while driving, save trips, review them on a map. */
 import { createExplore } from "./explore.js";
+import { renderGuide, startTour, tourDone } from "./guide.js";
 import { createMap } from "./gzmap.js";
+import { bindReviewButtons, hasReviewed, openReview } from "./review.js";
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (value) =>
@@ -281,6 +283,28 @@ document.addEventListener("click", (e) => {
   if (!$("#account-menu").contains(e.target)) $("#account-menu").hidden = true;
 });
 $("#upgrade-btn").addEventListener("click", () => openUpgrade());
+$("#account-menu").addEventListener("click", (e) => {
+  if (e.target.closest("a, [data-review], #tour-btn")) $("#account-menu").hidden = true;
+});
+$("#tour-btn").addEventListener("click", () => beginTour());
+bindReviewButtons({ source: "app" });
+
+function beginTour() {
+  startTour({ isGuest: !!state.user?.isGuest, navigate: (hash) => (location.hash = hash) });
+}
+
+/** After a second finished trip, ask once for a review. */
+function maybeAskForReview() {
+  try {
+    const done = Number(localStorage.getItem("gz_trips_done") || 0) + 1;
+    localStorage.setItem("gz_trips_done", String(done));
+    if (done < 2 || hasReviewed() || localStorage.getItem("gz_review_asked")) return;
+    localStorage.setItem("gz_review_asked", "1");
+  } catch {
+    return;
+  }
+  setTimeout(() => openReview({ source: "app" }), 1800);
+}
 $("#logout-btn").addEventListener("click", async () => {
   if (state.user?.isGuest) {
     if (!confirm("You're using a guest account. If you leave, you won't be able to get back to its trips and saved searches. Add your email first to keep them. Leave anyway?")) return;
@@ -735,6 +759,7 @@ $("#finish-form").addEventListener("submit", async (e) => {
     discardDraft();
     toast($("#finish-email").checked ? "Trip saved. Summary is on its way to your inbox." : "Trip saved");
     location.hash = `#/trips/${trip.id}`;
+    maybeAskForReview();
   } catch (err) {
     showError(
       $("#finish-error"),
@@ -1108,7 +1133,7 @@ const explore = createExplore({
 
 /* ---------- routing ---------- */
 
-const VIEWS = ["login", "drive", "trips", "panel", "key"];
+const VIEWS = ["login", "drive", "trips", "panel", "key", "guide"];
 
 function showView(name, tab) {
   for (const v of VIEWS) $(`#view-${v}`).hidden = v !== name;
@@ -1195,6 +1220,17 @@ function route() {
       showView("key", "key");
       explore.setContext(null);
       return renderKey();
+    case "guide": {
+      state.view = "guide";
+      showView("guide");
+      explore.setContext(null);
+      renderGuide($("#guide-body"), { esc, zones: state.zones, isGuest: !!state.user.isGuest });
+      const section = new URLSearchParams(query).get("s");
+      const target = section && document.getElementById(`g-${section}`);
+      if (target) target.scrollIntoView({ block: "start" });
+      else $("#view-guide").scrollTop = 0;
+      return;
+    }
     default: {
       const wasDrive = state.view === "drive";
       state.view = "drive";
@@ -1225,7 +1261,13 @@ window.addEventListener("hashchange", route);
   }
   if (state.user && state.draft) toast("Your unfinished trip is still here. Tap a color to keep painting.", 4000);
   route();
+  // First visit: a short tour, unless the link points somewhere specific.
+  if (state.user && !tourDone() && !/^#\/(verify|trips\/|explore\/|signin)/.test(location.hash)) setTimeout(beginTour, 900);
 })();
+
+$("#view-guide").addEventListener("click", (e) => {
+  if (e.target.closest("[data-start-tour]")) beginTour();
+});
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});

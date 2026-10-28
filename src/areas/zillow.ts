@@ -101,6 +101,40 @@ export async function staleDatasets(env: Env): Promise<ZillowDataset[]> {
   });
 }
 
+const CLAIM_MS = 10 * 60 * 1000;
+
+/**
+ * Marks a dataset as being imported, unless another import started in the last 10 minutes.
+ * Returns false if someone else holds the claim.
+ */
+async function claimDataset(env: Env, dataset: ZillowDataset): Promise<boolean> {
+  const now = Date.now();
+  const res = await env.DB.prepare(
+    `INSERT INTO zillow_imports (dataset, attempted_at) VALUES (?, ?)
+     ON CONFLICT(dataset) DO UPDATE SET attempted_at = excluded.attempted_at WHERE zillow_imports.attempted_at < ?`,
+  )
+    .bind(dataset.id, now, now - CLAIM_MS)
+    .run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
+/** Whether signed-in users may start an import themselves: on previews, or before the first import has run. */
+export async function canSelfImport(env: Env): Promise<boolean> {
+  if (env.DEV_MODE) return true;
+  return !(await importStatus(env)).some((s) => s.imported_at);
+}
+
+/** Imports the next stale dataset if nobody else is. Used where there is no cron (preview versions). */
+export async function importNextClaimed(env: Env): Promise<{ result: ImportResult | null; busy: boolean; remaining: string[] }> {
+  const stale = await staleDatasets(env);
+  for (const dataset of stale) {
+    if (!(await claimDataset(env, dataset))) continue;
+    const result = await importZillowDataset(env, dataset);
+    return { result, busy: false, remaining: (await staleDatasets(env)).map((d) => d.id) };
+  }
+  return { result: null, busy: stale.length > 0, remaining: stale.map((d) => d.id) };
+}
+
 /** Runs from the daily cron: refreshes up to three datasets per run to stay well inside limits. */
 export async function refreshStaleZillow(env: Env, max = 3): Promise<ImportResult[]> {
   const results: ImportResult[] = [];

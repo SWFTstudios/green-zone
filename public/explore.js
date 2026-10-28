@@ -29,6 +29,15 @@ const MAX_POLLS = 30;
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
+const SOURCE_NAMES = {
+  census: "Census",
+  osm: "OpenStreetMap",
+  zip: "ZIP codes",
+  cdc: "CDC activity",
+  night: "NASA night lights",
+  flood: "FEMA flood zones",
+};
+
 function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) || "null");
@@ -39,13 +48,14 @@ function loadPrefs() {
         mode: overlayById(p.mode || "score").id,
         everywhere: p.everywhere ?? !!p.overlay,
         night: !!p.night,
+        flood: !!p.flood,
         opacity: Number.isFinite(p.opacity) ? p.opacity : 0.45,
       };
     }
   } catch {
     /* storage blocked or corrupt: start from defaults */
   }
-  return { criteria: clone(PRESETS.balanced.criteria), settings: { ...DEFAULT_SETTINGS }, mode: "score", everywhere: false, night: false, opacity: 0.45 };
+  return { criteria: clone(PRESETS.balanced.criteria), settings: { ...DEFAULT_SETTINGS }, mode: "score", everywhere: false, night: false, flood: false, opacity: 0.45 };
 }
 
 export function createExplore({ map, api, esc, toast, openUpgrade, getZones, getLastFix, getPadding }) {
@@ -93,6 +103,7 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
   );
   areaLayer.setVisible(false);
   let nightLayer = null;
+  let floodLayer = null;
 
   const prefs = loadPrefs();
   let { criteria, settings } = prefs;
@@ -116,7 +127,7 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
     try {
       localStorage.setItem(
         PREFS_KEY,
-        JSON.stringify({ criteria, settings, mode: prefs.mode, everywhere: prefs.everywhere, night: prefs.night, opacity: prefs.opacity }),
+        JSON.stringify({ criteria, settings, mode: prefs.mode, everywhere: prefs.everywhere, night: prefs.night, flood: prefs.flood, opacity: prefs.opacity }),
       );
     } catch {
       /* not critical */
@@ -337,11 +348,24 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
     );
   }
 
+  function ensureFlood() {
+    // The tile URL comes from the server, so wait for the data status.
+    if (floodLayer || !prefs.flood || !dataStatus?.floodTiles) return;
+    floodLayer = map.source(
+      "flood-zones",
+      { type: "raster", tiles: [dataStatus.floodTiles], tileSize: 256, minzoom: 11, attribution: "Flood zones: FEMA NFHL" },
+      [{ id: "flood-zones", type: "raster", paint: { "raster-opacity": 0.6, "raster-fade-duration": 200 } }],
+      { z: 12 },
+    );
+  }
+
   function applyLayers() {
     const showAreas = !!context && prefs.mode !== "off";
     areaLayer.setVisible(showAreas);
     ensureNight();
     nightLayer?.setVisible(prefs.night && mapContext !== null);
+    ensureFlood();
+    floodLayer?.setVisible(prefs.flood && mapContext !== null);
     if (showAreas) paint();
     else renderLegend();
     if (!showAreas) tip.remove();
@@ -538,17 +562,23 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
     const zillow = dataStatus?.zillow || [];
     const loaded = zillow.filter((d) => d.importedAt);
     const failed = zillow.filter((d) => d.error && !d.importedAt);
+    const rate = dataStatus?.mortgageRate;
+    const canLoad = dataStatus?.canLoadMarket && loaded.length < zillow.length;
     return `
       <p><b>Home values and rents</b> come from Zillow Research (ZHVI and ZORI) by ZIP code${
         loaded.length ? `, latest month ${esc(loaded.map((d) => d.month).filter(Boolean).sort().pop() || "")}` : ""
       }. ${loaded.length ? `${loaded.length} of ${zillow.length} Zillow datasets loaded.` : "Zillow data hasn't been imported yet, so Census figures are used instead."}${
         failed.length ? ` <span class="ex-notice">Import problem: ${esc(failed[0].label)}: ${esc(failed[0].error)}</span>` : ""
       }</p>
-      <p><b>Housing and economy</b> come from the Census American Community Survey 5-year estimates for each tract. Only housing, market and economic figures are used. Nothing about race, ethnicity, religion, sex, family status or disability goes into a score.</p>
-      <p><b>Outdoors, lighting, amenities and land use</b> come from OpenStreetMap. That data is crowd-mapped, so coverage varies by city. "Outdoor activity" counts parks, trails and fitness spots; it is not Strava data, whose terms don't allow sharing it across users.</p>
+      ${canLoad ? `<p><button class="btn btn-ghost" type="button" data-market-load>Load Zillow data now</button> <span class="muted small" id="market-load-status">Takes a minute or two.</span></p>` : ""}
+      <p><b>Mortgage payments</b> use Freddie Mac's 30-year fixed rate from FRED${rate?.rate ? ` (${esc(rate.rate)}% on ${esc(rate.date)})` : ""}, with 20% down, before taxes and insurance.</p>
+      <p><b>Housing, economy and commuting</b> come from the Census American Community Survey 5-year estimates for each tract. Only housing, market, commuting and economic figures are used. Nothing about race, ethnicity, religion, sex, family status or disability goes into a score.</p>
+      <p><b>Flood zones</b> come from FEMA's National Flood Hazard Layer: the share of each tract in a 1%-a-year (100-year) flood zone, where lenders usually require flood insurance.</p>
+      <p><b>Active adults</b> come from CDC PLACES, a model-based estimate of adults who got physical activity outside work in the past month. <b>Night brightness</b> comes from NASA Black Marble satellite imagery; in dense city centers it tops out, so street lighting from OpenStreetMap tells those areas apart better.</p>
+      <p><b>Outdoors, lighting, amenities and land use</b> come from OpenStreetMap. That data is crowd-mapped, so coverage varies by city.</p>
       <p><b>Zoning:</b> there's no free nationwide zoning dataset. "Main land use" is what's mapped on the ground, not the legal zoning. Check the city or county zoning map before you buy.</p>
       <p><b>Crime</b> isn't included; there's no reliable nationwide source by neighborhood. Your own drive ratings can stand in for what you see.</p>
-      <p class="muted small">Home value and rent data © Zillow, Inc., Zillow Research. Map data © OpenStreetMap contributors. Census Bureau data.</p>`;
+      <p class="muted small">Home value and rent data © Zillow, Inc., Zillow Research. Map data © OpenStreetMap contributors. Census Bureau, CDC, FEMA, NASA and Federal Reserve Bank of St. Louis (FRED) data.${dataStatus?.rentcast ? " Market snapshots by RentCast." : ""}</p>`;
   }
 
   function renderArea() {
@@ -582,8 +612,9 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
           .join(", ")}</p>`
       : "";
     const missing = (m.missing || []).length
-      ? `<p class="ex-notice">Still loading: ${esc(m.missing.join(", "))}. It will retry automatically.</p>`
+      ? `<p class="ex-notice">Still loading: ${esc(m.missing.map((k) => SOURCE_NAMES[k] || k).join(", "))}. It will retry automatically.</p>`
       : "";
+    const rate = dataStatus?.mortgageRate;
     body().innerHTML = `
       <button class="btn btn-link ex-back" type="button" id="ex-back">← Back to results</button>
       <h2>${esc(a.name)}</h2>
@@ -593,9 +624,39 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
       ${missing}
       <h3>How it scores</h3>
       ${parts ? `<ul class="score-parts">${parts}</ul>` : `<p class="muted">No criteria are switched on.</p>`}
+      ${dataStatus?.rentcast && m.zip ? `<div id="ex-market" class="ex-market"><h3>Market now · ZIP ${esc(m.zip)}</h3><p class="muted small">Loading listings…</p></div>` : ""}
       ${groups}
       ${mix}
-      <p class="muted small">Census ${esc(m.acsYear || "")} 5-year estimates${m.zillowMonth ? ` · Zillow ${esc(m.zillowMonth)}` : ""} · OpenStreetMap. Home value and rent data © Zillow, Inc.</p>`;
+      <p class="muted small">Census ${esc(m.acsYear || "")} 5-year estimates${m.zillowMonth ? ` · Zillow ${esc(m.zillowMonth)}` : ""}${
+        rate?.rate ? ` · Mortgage payment at ${esc(rate.rate)}% (FRED, ${esc(rate.date)}), 20% down` : ""
+      } · OpenStreetMap. Home value and rent data © Zillow, Inc.</p>`;
+    if (dataStatus?.rentcast && m.zip) loadMarketSnapshot(m.zip);
+  }
+
+  const snapshots = new Map();
+  async function loadMarketSnapshot(zip) {
+    const el = () => document.querySelector("#ex-market");
+    try {
+      if (!snapshots.has(zip)) snapshots.set(zip, (await api(`/api/areas/market/${zip}`)).snapshot);
+    } catch (err) {
+      if (el()) el().innerHTML = `<h3>Market now · ZIP ${esc(zip)}</h3><p class="muted small">${esc(err.message)}</p>`;
+      return;
+    }
+    const s = snapshots.get(zip);
+    if (!el() || areas.get(selected)?.metrics?.zip !== zip) return;
+    const usd = (v) => formatValue({ fmt: "usd" }, v);
+    const n = (v, unit = "") => (v == null ? "—" : `${Math.round(v).toLocaleString()}${unit}`);
+    el().innerHTML = `<h3>Market now · ZIP ${esc(zip)}</h3>
+      <table class="area-table">
+        <tr><th>Homes for sale</th><td>${esc(n(s.sale?.listings))}${s.sale?.newListings ? ` <span class="muted small">(${esc(n(s.sale.newListings))} new)</span>` : ""}</td></tr>
+        <tr><th>Median list price</th><td>${esc(usd(s.sale?.medianPrice))}</td></tr>
+        <tr><th>Median price per sq ft</th><td>${esc(usd(s.sale?.medianPricePerSqft))}</td></tr>
+        <tr><th>Median days on market (sale)</th><td>${esc(n(s.sale?.medianDaysOnMarket, " days"))}</td></tr>
+        <tr><th>Rentals listed</th><td>${esc(n(s.rent?.listings))}</td></tr>
+        <tr><th>Median asking rent</th><td>${esc(s.rent?.medianRent == null ? "—" : `${usd(s.rent.medianRent)}/mo`)}</td></tr>
+        <tr><th>Median days on market (rent)</th><td>${esc(n(s.rent?.medianDaysOnMarket, " days"))}</td></tr>
+      </table>
+      <p class="muted small">Listings data by RentCast${s.updated ? `, updated ${esc(s.updated)}` : ""}.</p>`;
   }
 
   function openArea(geoid) {
@@ -696,6 +757,8 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
       const [lat, lng] = t.dataset.goto.split(",").map(Number);
       map.flyTo([lat, lng], Math.max(map.getZoom(), 14));
       if (areas.has(t.dataset.geoid)) openArea(t.dataset.geoid);
+    } else if (t.dataset.marketLoad !== undefined) {
+      await loadMarketData(t);
     } else if (t.id === "ex-back") {
       const prev = selected;
       selected = null;
@@ -941,6 +1004,31 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
 
   /* ---------- context switching ---------- */
 
+  /** Imports Zillow datasets one at a time, for preview versions that have no daily job. */
+  async function loadMarketData(btn) {
+    btn.disabled = true;
+    const status = () => $("#market-load-status");
+    try {
+      for (let i = 0; i < 12; i++) {
+        btn.textContent = "Loading Zillow data…";
+        const { result, busy, remaining } = await api("/api/areas/market-load", { method: "POST" });
+        if (result && !result.ok) throw new Error(`${result.dataset}: ${result.error}`);
+        if (status()) status().textContent = remaining.length ? `${remaining.length} datasets to go…` : "Done.";
+        if (!remaining.length) break;
+        if (busy && !result) {
+          if (status()) status().textContent = "Another import is running. Check back in a few minutes.";
+          break;
+        }
+      }
+      await refreshDataStatus();
+      load(true);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Try again";
+      if (status()) status().textContent = err.message;
+    }
+  }
+
   async function refreshDataStatus() {
     try {
       dataStatus = await api("/api/areas/status");
@@ -981,6 +1069,7 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
       <label class="lp-range">Color strength <input type="range" min="0.15" max="0.8" step="0.05" value="${prefs.opacity}" data-lp="opacity"></label>
       <div class="lp-section">Overlays</div>
       <label class="check lp-check"><input type="checkbox" data-lp="night" ${prefs.night ? "checked" : ""}> Night lights from space <small>NASA Black Marble</small></label>
+      <label class="check lp-check"><input type="checkbox" data-lp="flood" ${prefs.flood ? "checked" : ""}> Flood zones <small>FEMA, 100-year floodplain · zoom in to see</small></label>
       <button type="button" class="btn btn-ghost lp-3d" data-lp-3d aria-pressed="${map.threeD}">${map.threeD ? "Flat view" : "3D view"}</button>
       <p class="muted small lp-hint">Drag with two fingers (or right-click drag) to tilt and rotate.</p>`;
   }
@@ -1032,6 +1121,10 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
       paint();
     } else if (key === "night") {
       prefs.night = e.target.checked;
+      applyLayers();
+    } else if (key === "flood") {
+      prefs.flood = e.target.checked;
+      if (prefs.flood && !dataStatus) refreshDataStatus().then(applyLayers);
       applyLayers();
     } else if (key === "everywhere") {
       prefs.everywhere = e.target.checked;
