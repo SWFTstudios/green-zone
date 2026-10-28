@@ -6,11 +6,23 @@ DEV_MODE=1
 # Enables POST /api/admin/zillow-import (Authorization: Bearer <token>).
 ADMIN_TOKEN=change-me
 
-# Optional: free key from https://api.census.gov/data/key_signup.html
+# Free key from https://api.census.gov/data/key_signup.html. The Census API rejects requests without one.
 # CENSUS_API_KEY=
+
+# Inbox that receives reviews (kept out of the repo and the page). Locally, emails print to the console.
+# REVIEW_TO=
+
+# Optional: RentCast key for per-ZIP listing snapshots (metered; capped at RENTCAST_MONTHLY_LIMIT calls a month, default 45).
+# RENTCAST_API_KEY=
 
 # Uncomment to work offline against `node test/mock-data-server.mjs` (synthetic Philadelphia data).
 # TIGERWEB_URL=http://127.0.0.1:8790/tiger
 # CENSUS_API_URL=http://127.0.0.1:8790/census
 # OVERPASS_URL=http://127.0.0.1:8790/overpass
 # ZILLOW_BASE_URL=http://127.0.0.1:8790/zillow
+# CDC_PLACES_URL=http://127.0.0.1:8790/cdc
+# NIGHT_LIGHTS_TILES=http://127.0.0.1:8790/night/{z}/{y}/{x}.png
+# FEMA_NFHL_URL=http://127.0.0.1:8790/fema
+# FRED_CSV_URL=http://127.0.0.1:8790/fred.csv
+# RENTCAST_API_KEY=test-rentcast
+# RENTCAST_URL=http://127.0.0.1:8790/rentcast

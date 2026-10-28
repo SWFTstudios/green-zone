@@ -1,16 +1,20 @@
 // Keeps the app shell available when signal drops mid-drive. API calls always go to the network.
-const CACHE = "green-zone-v2";
+const CACHE = "green-zone-v4";
 const SHELL = [
-  "/",
-  "/index.html",
+  "/app",
   "/app.js",
   "/styles.css",
   "/icon.svg",
   "/manifest.webmanifest",
-  "/vendor/leaflet/leaflet.js",
-  "/vendor/leaflet/leaflet.css",
+  "/vendor/maplibre/maplibre-gl.mjs",
+  "/vendor/maplibre/maplibre-gl-worker.mjs",
+  "/vendor/maplibre/maplibre-gl.css",
+  "/gzmap.js",
   "/explore.js",
   "/areas-core.js",
+  "/guide.js",
+  "/review.js",
+  "/review.css",
 ];
 
 self.addEventListener("install", (event) => {
@@ -39,6 +43,9 @@ self.addEventListener("fetch", (event) => {
         }
         return res;
       })
-      .catch(() => caches.match(event.request).then((hit) => hit || caches.match("/index.html"))),
+      // Offline page loads fall back to the app shell; the landing page isn't needed on the road.
+      .catch(() =>
+        caches.match(event.request).then((hit) => hit || (event.request.mode === "navigate" ? caches.match("/app") : Response.error())),
+      ),
   );
 });

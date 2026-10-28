@@ -1,7 +1,8 @@
-import { areaStatus, queryAreas } from "./areas";
-import { ZILLOW_DATASETS, importZillowDataset, refreshStaleZillow, staleDatasets } from "./areas/zillow";
+import { areaStatus, marketSnapshot, queryAreas } from "./areas";
+import { ZILLOW_DATASETS, canSelfImport, importNextClaimed, importZillowDataset, refreshStaleZillow, staleDatasets } from "./areas/zillow";
 import { cleanupGuests, currentUser, logout, requestCode, requireUser, startGuest, verifyCode } from "./auth";
 import { HttpError, assertSameOrigin, errorResponse, json, readJson, sha256Hex } from "./http";
+import { createReview } from "./reviews";
 import { createSearch, deleteSearch, getSearch, listSearches, updateSearch } from "./searches";
 import { createTrip, deleteTrip, getMap, getTrip, listTrips, updateTrip } from "./trips";
 import { createZone, deleteZone, listZones, updateZone } from "./zones";
@@ -50,6 +51,11 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext): Pro
     });
   }
 
+  // Reviews come from the landing page too, so they don't need a session.
+  if (path === "/api/reviews" && method === "POST") {
+    return createReview(request, env, ctx, await currentUser(request, env), await readJson(request));
+  }
+
   const user = await requireUser(request, env);
 
   if (path === "/api/zones") {
@@ -77,6 +83,12 @@ async function handleApi(request: Request, env: Env, ctx: ExecutionContext): Pro
 
   if (path === "/api/areas" && method === "POST") return queryAreas(request, env, user);
   if (path === "/api/areas/status" && method === "GET") return areaStatus(env);
+  if (path === "/api/areas/market-load" && method === "POST") {
+    if (!(await canSelfImport(env))) throw new HttpError(403, "Zillow data loads automatically every day.", "forbidden");
+    return json(await importNextClaimed(env));
+  }
+  const marketMatch = path.match(/^\/api\/areas\/market\/(\w+)$/);
+  if (marketMatch && method === "GET") return marketSnapshot(env, marketMatch[1]);
 
   if (path === "/api/searches") {
     if (method === "GET") return listSearches(env, user);

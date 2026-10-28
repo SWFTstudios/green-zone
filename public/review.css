@@ -1,0 +1,56 @@
+/* Review popup. Uses the page's tokens where they exist (landing: --bg-elev, app: --surface). */
+.rv-dialog {
+  --rv-bg: var(--bg-elev, var(--surface, #fff));
+  --rv-ink: var(--ink, #111a15);
+  --rv-muted: var(--muted, #5b6660);
+  --rv-line: var(--line, #d9e0db);
+  --rv-brand: var(--brand, #15803d);
+  --rv-on-brand: var(--on-brand, var(--brand-ink, #fff));
+  width: min(520px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 22px;
+  background: var(--rv-bg);
+  color: var(--rv-ink);
+  box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.55);
+  overflow: auto;
+}
+.rv-dialog::backdrop { background: rgba(6, 20, 12, 0.55); backdrop-filter: blur(3px); }
+.rv-dialog[open] { animation: rv-in 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes rv-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } }
+.rv-form { position: relative; padding: 1.6rem 1.4rem 1.3rem; font-size: 16px; line-height: 1.45; }
+.rv-close { position: absolute; top: 0.6rem; right: 0.7rem; width: 36px; height: 36px; border-radius: 50%; font-size: 1.5rem; line-height: 1; color: var(--rv-muted); background: none; border: 0; cursor: pointer; }
+.rv-close:hover { background: color-mix(in srgb, var(--rv-ink) 8%, transparent); }
+.rv-form h2 { font-size: 1.35rem; letter-spacing: -0.02em; margin: 0 2rem 0.3rem 0; line-height: 1.2; }
+.rv-sub { color: var(--rv-muted); margin: 0 0 1rem; }
+.rv-stars { border: 0; margin: 0 0 0.6rem; padding: 0; display: flex; align-items: center; gap: 0.15rem; }
+.rv-stars legend { font-weight: 650; font-size: 0.92rem; margin-bottom: 0.3rem; padding: 0; }
+.rv-stars input { position: absolute; opacity: 0; pointer-events: none; }
+.rv-stars label { cursor: pointer; padding: 0.15rem; margin: 0; }
+.rv-stars svg { width: 36px; height: 36px; fill: color-mix(in srgb, var(--rv-ink) 14%, transparent); transition: fill 0.12s, transform 0.12s; }
+/* review.js marks the chosen star and every star before it. */
+.rv-stars label.on svg { fill: #f5b400; }
+.rv-stars label:hover svg { transform: scale(1.1); }
+.rv-stars input:focus-visible + label { outline: 2.5px solid var(--rv-brand); border-radius: 8px; }
+.rv-star-label { margin-left: 0.6rem; color: var(--rv-muted); font-size: 0.9rem; font-weight: 600; }
+.rv-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.rv-label { display: block; font-weight: 650; font-size: 0.92rem; margin: 0.8rem 0 0.3rem; }
+.rv-label span { font-weight: 500; color: var(--rv-muted); }
+.rv-form textarea, .rv-form input:not([type="radio"]) {
+  width: 100%; box-sizing: border-box; font: inherit; color: var(--rv-ink); background: var(--rv-bg);
+  border: 1px solid var(--rv-line); border-radius: 12px; padding: 0.65rem 0.8rem;
+}
+.rv-form textarea:focus, .rv-form input:focus { outline: 2px solid var(--rv-brand); outline-offset: 0; border-color: transparent; }
+.rv-row { display: grid; gap: 0 0.8rem; }
+@media (min-width: 520px) { .rv-row { grid-template-columns: 1fr 1fr; } }
+.rv-hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.rv-error { color: #b91c1c; font-size: 0.92rem; margin: 0.8rem 0 0; }
+.rv-submit { width: 100%; margin-top: 1.1rem; padding: 0.85rem 1rem; font: inherit; font-weight: 700; border: 0; border-radius: 999px; background: var(--rv-brand); color: var(--rv-on-brand); cursor: pointer; }
+.rv-submit:disabled { opacity: 0.6; cursor: default; }
+.rv-fine { color: var(--rv-muted); font-size: 0.8rem; text-align: center; margin: 0.7rem 0 0; }
+.rv-done { text-align: center; padding: 0.8rem 0 0.2rem; }
+.rv-done h2 { margin: 0.6rem 0 0.3rem; }
+.rv-check { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto; background: color-mix(in srgb, var(--rv-brand) 15%, transparent); }
+.rv-check svg { width: 30px; height: 30px; fill: none; stroke: var(--rv-brand); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }

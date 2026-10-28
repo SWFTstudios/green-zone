@@ -76,3 +76,22 @@ test("drive ratings weigh painted meters inside each area", () => {
   assert.equal(r.get("A").rating, 100);
   assert.equal(r.get("B").rating, -50);
 });
+
+test("overlay colors follow the ramp between the 5th and 95th percentile", async () => {
+  const { OVERLAYS, overlayColors, rampColor, overlayById } = await import("../public/areas-core.js");
+  assert.equal(rampColor(["#000000", "#ffffff"], 0), "#000000");
+  assert.equal(rampColor(["#000000", "#ffffff"], 1), "#ffffff");
+  assert.equal(rampColor(["#000000", "#ffffff"], 0.5), "#808080");
+  assert.equal(rampColor(["#000000", "#ff0000", "#ffffff"], 0.75), "#ff8080");
+  const night = overlayById("nightLight");
+  const areas = Array.from({ length: 21 }, (_, i) => ({ geoid: String(i), metrics: { nightLight: i * 5 } }));
+  areas.push({ geoid: "none", metrics: { nightLight: null } }, { geoid: "pending", metrics: null });
+  const { colors, min, max, count } = overlayColors(areas, night);
+  assert.equal(count, 21);
+  assert.equal(min, 5);
+  assert.equal(max, 95);
+  assert.equal(colors.get("0"), night.ramp[0]);
+  assert.equal(colors.get("20"), night.ramp[night.ramp.length - 1]);
+  assert.ok(!colors.has("none") && !colors.has("pending"));
+  for (const o of OVERLAYS) if (o.metric) assert.ok(metricByKey(o.metric), `${o.id} uses a known metric`);
+});

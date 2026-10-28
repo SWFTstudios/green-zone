@@ -3,198 +3,451 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Green Zone: paint the streets you drive, score every neighborhood</title>
+  <meta name="description" content="Driving for dollars, made visual. Tap green, yellow or red as you drive and the street you're on is painted that color. Then score every neighborhood with free public data on prices, rents, flood risk, activity and lighting.">
   <meta name="theme-color" content="#14532d">
-  <meta name="description" content="Driving for dollars made easier: paint streets green, yellow or red as you drive.">
-  <title>Green Zone</title>
+  <meta property="og:title" content="Green Zone: paint the streets you drive">
+  <meta property="og:description" content="Tap a color as you drive to paint each street. Score every neighborhood with free public housing data. Free, no sign-up.">
+  <meta property="og:type" content="website">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/landing.css">
+  <link rel="stylesheet" href="/review.css">
+  <script>
+    // Old links like /#/trips/123 belong to the app, which now lives at /app.
+    const toApp = () => location.hash.startsWith("#/") && location.replace("/app" + location.hash);
+    toApp();
+    addEventListener("hashchange", toApp);
+  </script>
 </head>
 <body>
-  <div id="map" aria-label="Map"></div>
+  <a class="skip" href="#main">Skip to content</a>
 
-  <header class="topbar" id="topbar" hidden>
-    <a class="brand" href="#/drive"><span class="brand-dot"></span>Green Zone</a>
-    <nav class="tabs" aria-label="Main">
-      <a href="#/drive" data-tab="drive">Drive</a>
-      <a href="#/explore" data-tab="explore">Explore</a>
-      <a href="#/trips" data-tab="trips">Trips</a>
-      <a href="#/map" data-tab="map">My map</a>
-      <a href="#/key" data-tab="key">Key</a>
-    </nav>
-    <button class="account" id="account-btn" type="button" aria-haspopup="true" aria-expanded="false">
-      <span class="plan-badge" id="plan-badge">Free</span>
-    </button>
-    <div class="account-menu" id="account-menu" hidden>
-      <div class="account-email" id="account-email"></div>
-      <button type="button" id="save-account-btn" hidden>Save my work with email</button>
-      <button type="button" id="upgrade-btn">See Pro features</button>
-      <button type="button" id="logout-btn">Sign out</button>
+  <header class="nav" id="nav">
+    <div class="wrap nav-inner">
+      <a href="/" class="brand" aria-label="Green Zone home">
+        <img src="/icon.svg" alt="" width="32" height="32">
+        <span>Green <b>Zone</b></span>
+      </a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="#how">How it works</a>
+        <a href="#key">Map key</a>
+        <a href="#data">The data</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <div class="nav-cta">
+        <button type="button" class="link-quiet" data-review>Leave a review</button>
+        <a href="/app" class="btn btn-primary btn-sm" data-start data-nav-app>Open the app</a>
+      </div>
     </div>
   </header>
 
-  <!-- Sign in -->
-  <section class="page page-center" id="view-login" hidden>
-    <div class="card login-card">
-      <div class="login-logo"><span class="stripe g"></span><span class="stripe y"></span><span class="stripe r"></span></div>
-      <h1 id="login-title">Green Zone</h1>
-      <p class="muted" id="login-intro">Driving for dollars made easier. Paint each street green, yellow or red as you drive, then keep a map of where you want to invest.</p>
-      <p class="muted small" id="login-upgrade-note" hidden>Add your email to keep your trips and saved searches and use them on any device. If you already have an account, everything you made as a guest moves into it.</p>
-      <form id="login-form" autocomplete="on">
-        <label for="login-email">Email</label>
-        <input id="login-email" name="email" type="email" inputmode="email" autocomplete="email" required placeholder="you@example.com">
-        <button class="btn btn-primary btn-block" type="submit">Email me a sign-in code</button>
-      </form>
-      <form id="code-form" hidden>
-        <p>We sent a 6-digit code to <b id="code-email"></b>.</p>
-        <label for="login-code">Sign-in code</label>
-        <input id="login-code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" maxlength="7" required placeholder="123456">
-        <p class="dev-code" id="dev-code" hidden></p>
-        <button class="btn btn-primary btn-block" type="submit">Sign in</button>
-        <button class="btn btn-link" type="button" id="code-back">Use a different email</button>
-      </form>
-      <p class="form-error" id="login-error" role="alert" hidden></p>
-      <div class="login-guest" id="login-guest">
-        <span class="login-or">or</span>
-        <button class="btn btn-ghost btn-block" type="button" id="guest-btn">Continue as guest</button>
-        <p class="muted small">No sign-up needed. Your work is saved in this browser, and you can add your email any time.</p>
+  <main id="main">
+    <!-- Hero -->
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="pill"><span class="dot" aria-hidden="true"></span> Driving for dollars, made visual</p>
+          <h1>Paint the streets you drive. <em>Score every neighborhood.</em></h1>
+          <p class="lede">Tap <b class="c-g">green</b>, <b class="c-y">yellow</b> or <b class="c-r">red</b> as you drive and the street you're on is painted that color. Then Explore scores every neighborhood with free public data on prices, rents, flood risk, activity and lighting, weighed by what <i>you</i> care about.</p>
+          <div class="hero-actions">
+            <a href="/app" class="btn btn-lime btn-lg" data-start>Try it free, no sign-up <span aria-hidden="true">→</span></a>
+            <a href="#how" class="btn btn-glass btn-lg">See how it works</a>
+          </div>
+          <ul class="trust">
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg> No account needed</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg> Works on your phone</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7"/></svg> Keeps working when signal drops</li>
+          </ul>
+        </div>
+
+        <div class="hero-visual" aria-hidden="true">
+          <div class="phone">
+            <div class="phone-notch"></div>
+            <div class="phone-screen">
+              <svg class="demo-map" viewBox="0 0 300 520" preserveAspectRatio="xMidYMid slice">
+                <rect width="300" height="520" fill="var(--map-bg)"/>
+                <path d="M-10 80 Q 80 70 140 120 T 320 150 L 320 -10 L -10 -10 Z" fill="var(--map-park)"/>
+                <path d="M210 330 q 40 -20 100 10 v 80 q -60 10 -100 -20 z" fill="var(--map-water)"/>
+                <rect x="30" y="300" width="70" height="60" rx="6" fill="var(--map-park)"/>
+                <g class="blocks" fill="var(--map-block)">
+                  <rect x="20" y="170" width="70" height="50" rx="4"/><rect x="110" y="170" width="70" height="50" rx="4"/><rect x="200" y="180" width="80" height="45" rx="4"/>
+                  <rect x="20" y="240" width="70" height="40" rx="4"/><rect x="110" y="240" width="70" height="40" rx="4"/><rect x="200" y="245" width="80" height="60" rx="4"/>
+                  <rect x="120" y="300" width="60" height="60" rx="4"/><rect x="20" y="380" width="80" height="50" rx="4"/><rect x="120" y="380" width="70" height="50" rx="4"/>
+                </g>
+                <g class="roads" fill="none" stroke-linecap="round">
+                  <path d="M0 160 H300 M0 232 H300 M0 292 H210 M0 370 H300 M100 140 V520 M190 150 V520 M14 0 V520" stroke="var(--map-road-casing)" stroke-width="12"/>
+                  <path d="M0 160 H300 M0 232 H300 M0 292 H210 M0 370 H300 M100 140 V520 M190 150 V520 M14 0 V520" stroke="var(--map-road)" stroke-width="9"/>
+                </g>
+                <g class="painted" fill="none" stroke-linecap="round" stroke-width="7">
+                  <path class="paint p1" pathLength="1" d="M100 510 V370" stroke="#16a34a"/>
+                  <path class="paint p2" pathLength="1" d="M100 370 V292 H190" stroke="#16a34a"/>
+                  <path class="paint p3" pathLength="1" d="M190 292 V232" stroke="#eab308"/>
+                  <path class="paint p4" pathLength="1" d="M190 232 H300" stroke="#dc2626"/>
+                </g>
+                <circle class="me" cx="190" cy="232" r="7" fill="#2563eb" stroke="#fff" stroke-width="3"/>
+              </svg>
+              <div class="demo-hud"><span class="gps"></span> GPS ±6 m · <b>1.4 mi</b> painted</div>
+              <div class="demo-pin">📍 Vacant, overgrown yard</div>
+              <div class="demo-buttons">
+                <span class="db g">Green</span><span class="db y">Yellow</span><span class="db r on">Red</span>
+              </div>
+            </div>
+          </div>
+          <div class="float float-score">
+            <span class="sw" style="background:#16a34a"></span>
+            <span><b>Census Tract 7.04</b><small>Score 82 · 7.1% rent yield · 0% flood zone</small></span>
+          </div>
+          <div class="float float-trip">
+            <b>Saturday loop</b>
+            <span class="bar"><i style="width:58%;background:#16a34a"></i><i style="width:27%;background:#eab308"></i><i style="width:15%;background:#dc2626"></i></span>
+            <small>6.2 mi · 4 notes</small>
+          </div>
+        </div>
       </div>
-      <button class="btn btn-link" type="button" id="login-back" hidden>Keep using as a guest</button>
+    </section>
+
+    <!-- Numbers -->
+    <section class="stats" aria-label="At a glance">
+      <div class="wrap"><div class="stats-grid">
+        <div><b>1 tap</b><span>to rate the street you're on</span></div>
+        <div><b>85,000</b><span>US neighborhoods you can score (Census tracts)</span></div>
+        <div><b>8</b><span>free public data sources</span></div>
+        <div><b>$0</b><span>to start, no card or account</span></div>
+      </div></div>
+    </section>
+
+    <!-- Who -->
+    <section class="section" id="who">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="kicker">Who it's for</p>
+          <h2>Anyone who learns a neighborhood <span class="hl">by driving it.</span></h2>
+          <p class="sub">Spreadsheets and sticky notes don't remember which side of the tracks felt right. Green Zone turns what you see from the driver's seat into a map you can come back to, and backs it up with the numbers.</p>
+        </header>
+        <div class="who-grid">
+          <article class="who reveal">
+            <span class="who-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13l2-5.5A2 2 0 0 1 6.9 6h10.2a2 2 0 0 1 1.9 1.5L21 13v5h-2.5M3 13v5h2.5M3 13h18"/><circle cx="7.5" cy="17.5" r="2"/><circle cx="16.5" cy="17.5" r="2"/></svg></span>
+            <h3>Driving for dollars</h3>
+            <p>Mark distressed blocks, drop a pin on every vacant house, and keep a clean list of the streets worth a mailer.</p>
+          </article>
+          <article class="who reveal">
+            <span class="who-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 10.5 12 3.5l8.5 7"/><path d="M5.5 9v11.5h13V9"/><path d="M10 20.5V15h4v5.5"/></svg></span>
+            <h3>Rental investors</h3>
+            <p>Find where rent covers the mortgage, vacancy is low and the flood map is clear, then drive those tracts to confirm.</p>
+          </article>
+          <article class="who reveal">
+            <span class="who-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-.5-.5-2.5z"/></svg></span>
+            <h3>Flippers</h3>
+            <p>Look for older single-family stock where values are climbing, and keep notes on every house that needs work.</p>
+          </article>
+          <article class="who reveal">
+            <span class="who-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="10" r="3"/><path d="M12 21s7-6.2 7-11a7 7 0 0 0-14 0c0 4.8 7 11 7 11z"/></svg></span>
+            <h3>Agents and scouts</h3>
+            <p>Scout a farm area, share what each color means to you, and email yourself a summary after every drive.</p>
+          </article>
+          <article class="who reveal">
+            <span class="who-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3.5 19c.5-3.2 2.8-5 5.5-5s5 1.8 5.5 5M14.5 14.6c.8-.4 1.6-.6 2.5-.6 2.2 0 4 1.5 4.4 4.5"/></svg></span>
+            <h3>Outreach teams</h3>
+            <p>With Pro, make your own colors, like <b>Purple: a community we want to reach out to</b>, and map any project.</p>
+          </article>
+          <article class="who reveal">
+            <span class="who-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16M6 16l4-6 3 3 5-7"/></svg></span>
+            <h3>New-market research</h3>
+            <p>Moving into a new city? Score every tract on screen in seconds and know where to spend your first weekend.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="section section-alt" id="how">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="kicker">How it works</p>
+          <h2>Three big buttons while you drive. A real map when you get home.</h2>
+          <p class="sub">The buttons are made to be tapped without looking twice. Better still, hand the phone to a passenger, or pull over first.</p>
+        </header>
+        <ol class="steps">
+          <li class="step reveal">
+            <span class="step-n">1</span>
+            <h3>Tap a color and drive</h3>
+            <p>Tap <b class="c-g">Green</b>, <b class="c-y">Yellow</b> or <b class="c-r">Red</b>. GPS paints the street you're on in that color as you go. No signal? The trip is kept on your phone.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step-n">2</span>
+            <h3>Switch, pause, note</h3>
+            <p>Tap a new color when the block changes, <b>Pause</b> to stop painting, and <b>Add note</b> to drop a pin: “vacant, overgrown yard, 412 Maple”.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step-n">3</span>
+            <h3>Finish and describe the trip</h3>
+            <p>Name the drive, write what each color meant on this trip, and email yourself a summary. Every trip lands on <b>My map</b>.</p>
+          </li>
+          <li class="step reveal">
+            <span class="step-n">4</span>
+            <h3>Explore with the numbers</h3>
+            <p>Every neighborhood on screen is colored by <i>your</i> criteria. Open one for every number behind its score, and save the search to come back to.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- Try the scoring -->
+    <section class="section" id="try">
+      <div class="wrap try-grid">
+        <div class="reveal">
+          <p class="kicker">Try it right now</p>
+          <h2>Your criteria decide what's green.</h2>
+          <p class="sub">Move the sliders. These are made-up neighborhoods, but this is the same scoring Explore uses: each area is ranked on what matters to you, and the colors update instantly.</p>
+          <a href="/app#/explore" class="btn btn-primary" data-start>Score real neighborhoods <span aria-hidden="true">→</span></a>
+        </div>
+        <div class="scorer reveal">
+          <div class="scorer-controls" id="scorer-controls"></div>
+          <div class="scorer-grid" id="scorer-grid" aria-live="polite"></div>
+          <p class="scorer-legend"><span><i style="background:#16a34a"></i>Green</span><span><i style="background:#eab308"></i>Yellow</span><span><i style="background:#dc2626"></i>Red</span><span class="muted">Sample data</span></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Map key -->
+    <section class="section section-alt" id="key">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="kicker">The map key</p>
+          <h2>How to read a Green Zone map.</h2>
+          <p class="sub">Two kinds of color share the map. Lines are what <i>you</i> painted. Shaded neighborhoods are what the data says, using your criteria.</p>
+        </header>
+        <div class="key-grid">
+          <article class="key-card reveal">
+            <h3>Streets you painted</h3>
+            <ul class="key-list">
+              <li><svg viewBox="0 0 60 14" aria-hidden="true"><path d="M4 7h52" stroke="#16a34a" stroke-width="6" stroke-linecap="round"/></svg><span><b>Green</b> Good: a block you'd buy on.</span></li>
+              <li><svg viewBox="0 0 60 14" aria-hidden="true"><path d="M4 7h52" stroke="#eab308" stroke-width="6" stroke-linecap="round"/></svg><span><b>Yellow</b> Mixed: worth a closer look.</span></li>
+              <li><svg viewBox="0 0 60 14" aria-hidden="true"><path d="M4 7h52" stroke="#dc2626" stroke-width="6" stroke-linecap="round"/></svg><span><b>Red</b> Rough: you'd pass for now.</span></li>
+              <li><svg viewBox="0 0 60 14" aria-hidden="true"><path d="M4 7h52" stroke="#7c3aed" stroke-width="6" stroke-linecap="round"/></svg><span><b>Your colors</b> Pro: any zone you define.</span></li>
+              <li><span class="key-pin">📍</span><span><b>Pins</b> Notes you dropped on the drive.</span></li>
+            </ul>
+            <p class="muted small">You can rewrite what each color means on the <b>Key</b> page.</p>
+          </article>
+          <article class="key-card reveal">
+            <h3>Neighborhood scores</h3>
+            <ul class="key-list">
+              <li><span class="key-fill" style="--c:#16a34a"></span><span><b>Green</b> Scores in the top third on your criteria.</span></li>
+              <li><span class="key-fill" style="--c:#eab308"></span><span><b>Yellow</b> In the middle.</span></li>
+              <li><span class="key-fill" style="--c:#dc2626"></span><span><b>Red</b> In the bottom third.</span></li>
+              <li><span class="key-fill key-dashed" style="--c:#dc2626"></span><span><b>Dashed outline</b> Misses one of your must-haves.</span></li>
+              <li><span class="key-fill" style="--c:#9ca3af"></span><span><b>Gray</b> Not enough data to score.</span></li>
+            </ul>
+            <p class="muted small">You choose where green starts and red ends.</p>
+          </article>
+          <article class="key-card reveal">
+            <h3>Layers</h3>
+            <ul class="key-list">
+              <li><span class="key-ramp" style="background:linear-gradient(90deg,#fff7bc,#78c679,#006837)"></span><span><b>Active adults</b> CDC estimate of who exercises.</span></li>
+              <li><span class="key-ramp" style="background:linear-gradient(90deg,#f1eef6,#74a9cf,#045a8d)"></span><span><b>Walk &amp; bike</b> Census commuters on foot.</span></li>
+              <li><span class="key-ramp" style="background:linear-gradient(90deg,#000004,#8c2981,#fe9f6d,#fcfdbf)"></span><span><b>Night brightness</b> NASA satellite view.</span></li>
+              <li><span class="key-ramp" style="background:linear-gradient(90deg,#f7fbff,#6baed6,#08306b)"></span><span><b>Flood risk</b> FEMA 100-year floodplain.</span></li>
+              <li><span class="key-ramp" style="background:linear-gradient(90deg,#d73027,#fee08b,#1a9850)"></span><span><b>Rent vs. mortgage</b> Does rent cover the payment?</span></li>
+            </ul>
+            <p class="muted small">Switch layers, Satellite and 3D from the layers button.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="section" id="features">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="kicker">What's inside</p>
+          <h2>Everything from the first drive to the offer.</h2>
+        </header>
+        <div class="bento">
+          <article class="tile tile-wide reveal">
+            <span class="tile-tag">Explore</span>
+            <h3>Every neighborhood, scored your way</h3>
+            <p>Start from a preset (Balanced investor, Cash-flow rentals, Appreciation, Fix and flip, Active and well lit, Single-family), then add, remove and weigh any of 40+ measures. Mark the ones you won't budge on as <b>must-haves</b>.</p>
+            <div class="mini-crit" aria-hidden="true">
+              <span>Rent ÷ mortgage <i style="width:80%"></i></span>
+              <span>Vacancy rate <i style="width:60%"></i></span>
+              <span>Flood zone <i style="width:40%"></i></span>
+            </div>
+          </article>
+          <article class="tile reveal">
+            <span class="tile-tag">Saved searches</span>
+            <h3>Name it, come back to it</h3>
+            <p>Keep the criteria, the map view and a snapshot of the results. Rename, update or delete any time.</p>
+          </article>
+          <article class="tile reveal">
+            <span class="tile-tag">Your drives count</span>
+            <h3>What you saw becomes a criterion</h3>
+            <p>Streets you painted feed “Your drive ratings”, from +100 (all green) to −100 (all red), right next to the data.</p>
+          </article>
+          <article class="tile reveal">
+            <span class="tile-tag">A map like the ones you know</span>
+            <h3>Pinch, tilt, 3D, satellite</h3>
+            <p>Smooth vector maps with 3D buildings, satellite imagery, search as you type, and layers you can switch on and off.</p>
+          </article>
+          <article class="tile reveal">
+            <span class="tile-tag">Draw mode</span>
+            <h3>Paint from your couch</h3>
+            <p>Tap along streets on a laptop or phone to mark areas you already know, no driving required.</p>
+          </article>
+          <article class="tile reveal">
+            <span class="tile-tag">Built for the road</span>
+            <h3>Signal drops, your trip doesn't</h3>
+            <p>Weak GPS fixes and jumps are filtered out, the screen stays awake, and unfinished trips survive a closed tab.</p>
+          </article>
+          <article class="tile tile-pro reveal">
+            <span class="tile-tag">Pro</span>
+            <h3>Your colors, your zones</h3>
+            <p>Add up to 24 zones with any name and color, and rename or recolor Green, Yellow and Red, for real estate or anything else you map.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Data -->
+    <section class="section section-alt" id="data">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="kicker">The data</p>
+          <h2>Free public data, shown with its source.</h2>
+          <p class="sub">Every number in Explore says where it came from. Nothing about race, ethnicity, religion, sex, family status or disability is fetched or scored, in line with fair housing.</p>
+        </header>
+        <div class="data-grid">
+          <div class="data reveal"><b>Zillow Research</b><span>Typical home values by type and bedrooms, asking rents and 12-month change, by ZIP.</span></div>
+          <div class="data reveal"><b>Census ACS</b><span>Home values, rents, income, vacancy, owners vs. renters, age of homes, commuting.</span></div>
+          <div class="data reveal"><b>FEMA flood maps</b><span>Share of each neighborhood in the 100-year floodplain, plus a flood-zone layer.</span></div>
+          <div class="data reveal"><b>FRED (St. Louis Fed)</b><span>This week's 30-year mortgage rate, for payment and rent-coverage estimates.</span></div>
+          <div class="data reveal"><b>CDC PLACES</b><span>Share of adults who are active in their free time, by tract.</span></div>
+          <div class="data reveal"><b>NASA Black Marble</b><span>How bright each area is at night, from satellite imagery.</span></div>
+          <div class="data reveal"><b>OpenStreetMap</b><span>Parks, trails, street lighting, transit, groceries, schools and land use.</span></div>
+          <div class="data reveal"><b>Census TIGER</b><span>Neighborhood (tract) and ZIP code boundaries.</span></div>
+        </div>
+        <p class="muted small data-note">Zoning and crime aren't included: there's no free, reliable nationwide source by neighborhood. Check the county zoning map before you buy.</p>
+      </div>
+    </section>
+
+    <!-- Pricing -->
+    <section class="section" id="pricing">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="kicker">Pricing</p>
+          <h2>Free for real estate. Pro when you need your own colors.</h2>
+        </header>
+        <div class="plans">
+          <article class="plan reveal">
+            <h3>Free</h3>
+            <p class="price"><b>$0</b></p>
+            <ul>
+              <li>Green, yellow and red painting</li>
+              <li>Unlimited trips, notes and summaries</li>
+              <li>Explore scores and every layer</li>
+              <li>5 saved searches</li>
+              <li>Use it as a guest, or save with your email</li>
+            </ul>
+            <a href="/app" class="btn btn-ghost btn-block" data-start>Start free</a>
+          </article>
+          <article class="plan plan-pro reveal">
+            <h3>Pro</h3>
+            <p class="price"><b>Coming soon</b></p>
+            <ul>
+              <li>Everything in Free</li>
+              <li>Up to 24 custom zones and colors</li>
+              <li>Rename and recolor Green, Yellow and Red</li>
+              <li>100 saved searches</li>
+            </ul>
+            <a href="/app#/key" class="btn btn-primary btn-block">See Pro on the Key page</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Reviews -->
+    <section class="section section-alt" id="reviews">
+      <div class="wrap review-cta reveal">
+        <div>
+          <p class="kicker">Tried it?</p>
+          <h2>Tell us how your drive went.</h2>
+          <p class="sub">What worked, what didn't, what you'd add. Every review is read by the people building Green Zone.</p>
+        </div>
+        <button type="button" class="btn btn-primary btn-lg" data-review>Leave a review</button>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section" id="faq">
+      <div class="wrap faq-wrap">
+        <header class="section-head reveal">
+          <p class="kicker">Questions</p>
+          <h2>Straight answers.</h2>
+        </header>
+        <div class="faq reveal">
+          <details>
+            <summary>Do I need an account?</summary>
+            <p>No. Open the app and you're in as a guest, with everything working. Your work stays in that browser until you choose <b>Save my work with email</b>, which signs you in with a 6-digit code (no passwords) and keeps your trips on any device.</p>
+          </details>
+          <details>
+            <summary>Is it safe to use while driving?</summary>
+            <p>The buttons are big and one tap changes the color, but the safest way is to let a passenger tap, or to pull over first. You can also paint later with Draw mode.</p>
+          </details>
+          <details>
+            <summary>What do the colors mean?</summary>
+            <p>Out of the box: green is a block you'd buy on, yellow is mixed, red is one you'd pass on. You can rewrite those meanings on the Key page, and with Pro add your own colors for any purpose.</p>
+          </details>
+          <details>
+            <summary>Where do the neighborhood scores come from?</summary>
+            <p>From free public data (Zillow Research, the Census, FEMA, FRED, CDC, NASA and OpenStreetMap), ranked against the other neighborhoods on screen using the criteria and weights you pick. Your own drive ratings can count too.</p>
+          </details>
+          <details>
+            <summary>Why isn't crime or zoning included?</summary>
+            <p>There's no free, reliable nationwide source at the neighborhood level for either. “Main land use” shows what's mapped on the ground, which isn't the legal zoning. Always check the city or county zoning map.</p>
+          </details>
+          <details>
+            <summary>Who can see my drives?</summary>
+            <p>Only you. Trips, notes, ratings and saved searches belong to your account (or your browser, as a guest) and aren't shared or sold.</p>
+          </details>
+          <details>
+            <summary>Does it work with bad signal?</summary>
+            <p>Yes. The trip in progress is saved on your phone as you go, so a dead zone, a refresh or a closed tab doesn't lose it. It uploads when you finish with signal.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="final">
+      <div class="wrap final-inner reveal">
+        <p class="final-stripes" aria-hidden="true"><i class="g"></i><i class="y"></i><i class="r"></i></p>
+        <h2>Your next drive could be your best deal.</h2>
+        <p>Open the app, tap Green, and start driving. It takes ten seconds and no sign-up.</p>
+        <a href="/app" class="btn btn-lime btn-lg" data-start>Start your first drive <span aria-hidden="true">→</span></a>
+        <p class="final-small">Free · Phone, tablet or laptop · Install it like an app</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div>
+        <a href="/" class="brand brand-foot"><img src="/icon.svg" alt="" width="28" height="28"><span>Green <b>Zone</b></span></a>
+        <p class="muted small">Driving for dollars, made visual. Made by <a href="https://swftstudios.com" rel="noopener">SWFT Studios</a>.</p>
+      </div>
+      <nav class="footer-links" aria-label="Footer">
+        <div><h4>App</h4><a href="/app" data-start>Open the app</a><a href="/app#/explore">Explore neighborhoods</a><a href="/app#/guide">How to use it</a></div>
+        <div><h4>Green Zone</h4><a href="#how">How it works</a><a href="#key">Map key</a><button type="button" class="link-btn" data-review>Leave a review</button></div>
+      </nav>
     </div>
-  </section>
+    <div class="wrap footer-legal muted small">Home value and rent data © Zillow, Inc. Map data © OpenStreetMap contributors. Census, FEMA, CDC, NASA and FRED data are public.</div>
+  </footer>
 
-  <!-- Drive -->
-  <section class="drive" id="view-drive" hidden>
-    <div class="hud" id="hud">
-      <div class="hud-status">
-        <span class="gps-dot" id="gps-dot"></span>
-        <span id="gps-text">Location off</span>
-      </div>
-      <div class="hud-stats" id="hud-stats"></div>
-      <div class="hud-clock" id="hud-clock"></div>
-    </div>
-    <div class="map-tools">
-      <button class="tool" type="button" id="follow-btn" title="Follow my location" aria-pressed="true">◎</button>
-      <button class="tool" type="button" id="draw-btn" title="Draw by tapping the map" aria-pressed="false">✎</button>
-      <button class="tool" type="button" id="areas-btn" title="Show area scores from Explore" aria-pressed="false">▦</button>
-    </div>
-    <div class="dock">
-      <p class="dock-hint" id="dock-hint">Tap a color to start painting the street you're on.</p>
-      <div class="zone-buttons" id="zone-buttons"></div>
-      <div class="dock-actions">
-        <button class="btn btn-ghost" type="button" id="pause-btn" disabled>Pause</button>
-        <button class="btn btn-ghost" type="button" id="note-btn" disabled>Add note</button>
-        <button class="btn btn-ghost" type="button" id="undo-btn" disabled>Undo</button>
-        <button class="btn btn-finish" type="button" id="finish-btn" disabled>Finish trip</button>
-      </div>
-    </div>
-  </section>
+  <div class="sticky-cta" id="sticky-cta">
+    <a href="/app" class="btn btn-primary btn-block" data-start>Try it free, no sign-up</a>
+  </div>
 
-  <!-- Trips list -->
-  <section class="page" id="view-trips" hidden>
-    <div class="page-inner">
-      <div class="page-head">
-        <h1>Trips</h1>
-        <a class="btn btn-primary" href="#/drive">New drive</a>
-      </div>
-      <div id="trips-list" class="trip-list"></div>
-    </div>
-  </section>
-
-  <!-- Trip detail / My map side panel -->
-  <section class="panel" id="view-panel" hidden>
-    <button class="panel-handle" type="button" id="panel-toggle" aria-expanded="true">
-      <span class="handle-bar"></span><span class="sr-only">Show or hide details</span>
-    </button>
-    <div class="panel-body" id="panel-body"></div>
-  </section>
-
-  <!-- Key (zone types) -->
-  <section class="page" id="view-key" hidden>
-    <div class="page-inner">
-      <div class="page-head">
-        <h1>Your key</h1>
-        <span class="plan-badge" id="key-plan"></span>
-      </div>
-      <p class="muted">The key explains what each color means. It's shown with every trip and in your trip summary emails.</p>
-      <p class="tip">Tip: describe what you can see, like property condition, vacant or boarded-up houses, traffic, and whether it feels safe to walk, rather than who lives there.</p>
-      <div id="zones-list" class="zones-list"></div>
-      <div id="zone-add"></div>
-    </div>
-  </section>
-
-  <!-- Modals -->
-  <dialog id="finish-dialog" class="dialog">
-    <form method="dialog" id="finish-form">
-      <h2>Finish trip</h2>
-      <p class="muted" id="finish-summary"></p>
-      <label for="finish-name">Trip name</label>
-      <input id="finish-name" maxlength="120" required>
-      <h3>Key for this trip</h3>
-      <p class="muted small">Each color keeps its usual meaning. Add what you saw on this drive.</p>
-      <div id="finish-legend" class="legend-edit"></div>
-      <label for="finish-notes">Notes</label>
-      <textarea id="finish-notes" rows="4" maxlength="10000" placeholder="Streets to come back to, owners to look up, anything you noticed…"></textarea>
-      <label class="check" id="finish-email-row"><input type="checkbox" id="finish-email" checked> Email me a summary of this trip</label>
-      <p class="form-error" id="finish-error" role="alert" hidden></p>
-      <div class="dialog-actions">
-        <button class="btn btn-danger-ghost" type="button" id="finish-discard">Discard trip</button>
-        <span class="spacer"></span>
-        <button class="btn btn-ghost" type="button" id="finish-cancel">Keep driving</button>
-        <button class="btn btn-primary" type="submit" id="finish-save">Save trip</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="note-dialog" class="dialog">
-    <form method="dialog" id="note-form">
-      <h2>Add a note here</h2>
-      <p class="muted small" id="note-where"></p>
-      <textarea id="note-text" rows="3" maxlength="1000" required placeholder="e.g. Vacant house, overgrown yard, 412 Maple"></textarea>
-      <div class="dialog-actions">
-        <span class="spacer"></span>
-        <button class="btn btn-ghost" type="button" id="note-cancel">Cancel</button>
-        <button class="btn btn-primary" type="submit">Drop note</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="upgrade-dialog" class="dialog">
-    <form method="dialog">
-      <h2>Green Zone Pro</h2>
-      <p>Free gives you Green, Yellow and Red for real estate. Pro lets you make the map fit any use case:</p>
-      <ul class="pro-list">
-        <li><span class="sw" style="background:#7c3aed"></span><b>Your own colors and zones</b>, like "Purple: a community we want to reach out to".</li>
-        <li><span class="sw" style="background:#0ea5e9"></span><b>Rename and recolor</b> Green, Yellow and Red.</li>
-        <li><span class="sw" style="background:#f97316"></span><b>Up to 24 zones</b> for canvassing, outreach, deliveries, scouting and more.</li>
-      </ul>
-      <p class="muted small" id="upgrade-status">Online checkout isn't switched on yet. To get Pro now, ask the app owner to add your email to the Pro list.</p>
-      <div class="dialog-actions">
-        <span class="spacer"></span>
-        <button class="btn btn-primary" value="close">Got it</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="search-dialog" class="dialog">
-    <form method="dialog" id="search-form">
-      <h2 id="search-dialog-title">Save this search</h2>
-      <label for="search-name">Name</label>
-      <input id="search-name" maxlength="80" required placeholder="e.g. Cash-flow rentals, North Philly">
-      <p class="muted small">Saves your criteria, this map view and the current results, so you can come back to them.</p>
-      <p class="form-error" id="search-error" role="alert" hidden></p>
-      <div class="dialog-actions">
-        <span class="spacer"></span>
-        <button class="btn btn-ghost" type="button" id="search-cancel">Cancel</button>
-        <button class="btn btn-primary" type="submit">Save</button>
-      </div>
-    </form>
-  </dialog>
-
-  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-
-  <script src="/vendor/leaflet/leaflet.js"></script>
-  <script src="/app.js" type="module"></script>
+  <script type="module" src="/landing.js"></script>
 </body>
 </html>

@@ -1,27 +1,42 @@
-/* Explore: score census tracts against the user's criteria and color them green / yellow / red. */
-/* global L */
+/* Explore: score census tracts against the user's criteria and color them on the map. */
 import {
   DEFAULT_SETTINGS,
   GROUPS,
   IMPORTANCE,
   LAND_USES,
   METRICS,
+  OVERLAYS,
   PRESETS,
   driveRatings,
   formatValue,
   geometryBounds,
   inputScale,
   metricByKey,
+  overlayById,
+  overlayColors,
   scoreAreas,
 } from "./areas-core.js";
+import { BASE_STYLES } from "./gzmap.js";
 
 const COLORS = { green: "#16a34a", yellow: "#eab308", red: "#dc2626", fail: "#7f1d1d", nodata: "#94a3b8", pending: "#94a3b8" };
 const COLOR_LABELS = { green: "Green", yellow: "Yellow", red: "Red", fail: "Misses a must-have", nodata: "Not enough data", pending: "Loading" };
 const PREFS_KEY = "gz_explore_v1";
+const DEFAULT_NIGHT_TILES =
+  "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png";
+const EMPTY = { type: "FeatureCollection", features: [] };
 const MIN_ZOOM = 12;
 const MAX_POLLS = 30;
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
+
+const SOURCE_NAMES = {
+  census: "Census",
+  osm: "OpenStreetMap",
+  zip: "ZIP codes",
+  cdc: "CDC activity",
+  night: "NASA night lights",
+  flood: "FEMA flood zones",
+};
 
 function loadPrefs() {
   try {
@@ -30,20 +45,65 @@ function loadPrefs() {
       return {
         criteria: p.criteria.filter((c) => metricByKey(c.key)),
         settings: { ...DEFAULT_SETTINGS, ...(p.settings || {}) },
-        overlay: !!p.overlay,
+        mode: overlayById(p.mode || "score").id,
+        everywhere: p.everywhere ?? !!p.overlay,
+        night: !!p.night,
+        flood: !!p.flood,
+        opacity: Number.isFinite(p.opacity) ? p.opacity : 0.45,
       };
     }
   } catch {
     /* storage blocked or corrupt: start from defaults */
   }
-  return { criteria: clone(PRESETS.balanced.criteria), settings: { ...DEFAULT_SETTINGS }, overlay: false };
+  return { criteria: clone(PRESETS.balanced.criteria), settings: { ...DEFAULT_SETTINGS }, mode: "score", everywhere: false, night: false, flood: false, opacity: 0.45 };
 }
 
-export function createExplore({ map, api, esc, toast, openUpgrade, getZones, getLastFix }) {
+export function createExplore({ map, api, esc, toast, openUpgrade, getZones, getLastFix, getPadding }) {
   const $ = (sel) => document.querySelector(sel);
-  const pane = map.createPane("areas");
-  pane.style.zIndex = "350";
-  const layer = L.layerGroup();
+  const hovered = { id: null };
+  const tip = new map.maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "gz-tip", offset: 12 });
+
+  const areaLayer = map.source(
+    "areas",
+    { type: "geojson", data: EMPTY, promoteId: "geoid" },
+    [
+      {
+        id: "areas-fill",
+        type: "fill",
+        paint: {
+          "fill-color": ["get", "color"],
+          "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], ["min", 0.9, ["+", ["get", "op"], 0.18]], ["get", "op"]],
+        },
+      },
+      {
+        id: "areas-line",
+        type: "line",
+        filter: ["!=", ["get", "dashed"], true],
+        paint: {
+          "line-color": ["case", ["boolean", ["feature-state", "selected"], false], "#0f172a", ["get", "stroke"]],
+          "line-width": [
+            "case",
+            ["boolean", ["feature-state", "selected"], false],
+            3.5,
+            ["boolean", ["feature-state", "hover"], false],
+            2.5,
+            0.8,
+          ],
+          "line-opacity": ["get", "lop"],
+        },
+      },
+      {
+        id: "areas-line-dashed",
+        type: "line",
+        filter: ["==", ["get", "dashed"], true],
+        paint: { "line-color": ["get", "stroke"], "line-width": 1.6, "line-dasharray": [2, 2], "line-opacity": ["get", "lop"] },
+      },
+    ],
+    { z: 20 },
+  );
+  areaLayer.setVisible(false);
+  let nightLayer = null;
+  let floodLayer = null;
 
   const prefs = loadPrefs();
   let { criteria, settings } = prefs;
@@ -65,7 +125,10 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
 
   const savePrefs = () => {
     try {
-      localStorage.setItem(PREFS_KEY, JSON.stringify({ criteria, settings, overlay: prefs.overlay }));
+      localStorage.setItem(
+        PREFS_KEY,
+        JSON.stringify({ criteria, settings, mode: prefs.mode, everywhere: prefs.everywhere, night: prefs.night, flood: prefs.flood, opacity: prefs.opacity }),
+      );
     } catch {
       /* not critical */
     }
@@ -108,7 +171,7 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
   }
 
   async function load(fresh = true) {
-    if (!context) return;
+    if (!context || prefs.mode === "off") return;
     if (map.getZoom() < MIN_ZOOM) {
       status = { pending: 0, notices: [], message: "Zoom in to a city or neighborhood to see area scores." };
       renderStatus();
@@ -142,7 +205,6 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
         }
         a.metrics = item.metrics ? { ...item.metrics, myRating: null } : null;
         areas.set(a.geoid, a);
-        ensureShape(a);
       }
       if (newShapes || segments?.length) recomputeRatings();
       status = { pending: data.pending, notices: data.notices || [], message: "" };
@@ -158,46 +220,160 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
   map.on("moveend", () => {
     if (!context) return;
     clearTimeout(moveTimer);
-    moveTimer = setTimeout(() => load(), context === "drive" ? 1500 : 450);
+    moveTimer = setTimeout(() => {
+      load();
+      rescore();
+    }, context === "passive" ? 1200 : 400);
   });
 
   /* ---------- map layer ---------- */
 
-  function styleFor(geoid) {
-    const r = results.get(geoid);
-    const color = r?.color || "pending";
-    const hidden = color === "fail" && settings.hideFails;
-    const isSelected = geoid === selected;
-    const fill = context === "drive" ? 0.18 : color === "pending" || color === "nodata" ? 0.08 : 0.38;
-    return {
-      pane: "areas",
-      color: isSelected ? "#0f172a" : COLORS[color],
-      weight: isSelected ? 3 : 1,
-      opacity: hidden ? 0 : 0.8,
-      fillColor: COLORS[color],
-      fillOpacity: hidden ? 0 : fill,
-      dashArray: color === "fail" ? "4 4" : null,
-    };
+  let legend = null;
+
+  /** Rebuilds the tract layer's colors for the current mode (score or a single measure). */
+  function paint() {
+    const overlay = overlayById(prefs.mode);
+    const visible = visibleAreas();
+    const ramp = overlay.metric ? overlayColors(visible, overlay) : null;
+    legend = ramp ? { overlay, min: ramp.min, max: ramp.max, count: ramp.count } : overlay.id === "score" ? { overlay } : null;
+    const base = context === "passive" ? prefs.opacity * 0.6 : prefs.opacity;
+    const features = [];
+    for (const a of areas.values()) {
+      if (!a.geometry) continue;
+      let color;
+      let op = base;
+      let dashed = false;
+      let lop = 0.85;
+      if (ramp) {
+        color = ramp.colors.get(a.geoid);
+        if (!color) {
+          color = COLORS.nodata;
+          op = 0.06;
+        }
+      } else {
+        const r = results.get(a.geoid);
+        const c = r?.color || "pending";
+        color = COLORS[c];
+        if (c === "pending" || c === "nodata") op = 0.06;
+        if (c === "fail") {
+          dashed = true;
+          if (settings.hideFails) op = lop = 0;
+        }
+      }
+      features.push({
+        type: "Feature",
+        properties: { geoid: a.geoid, color, stroke: color, op, lop, dashed },
+        geometry: a.geometry,
+      });
+    }
+    areaLayer.setData({ type: "FeatureCollection", features });
+    if (selected) areaLayer.setFeatureState(selected, { selected: true });
+    renderLegend();
   }
 
-  function ensureShape(a) {
-    if (a.shape || !a.geometry) return;
-    a.shape = L.geoJSON(a.geometry, { style: () => styleFor(a.geoid), pane: "areas" });
-    a.shape.on("click", () => context === "explore" && openArea(a.geoid));
-    a.shape.bindTooltip(() => {
+  function renderLegend() {
+    const el = $("#map-legend");
+    if (!el) return;
+    if (!context || !legend) {
+      el.hidden = true;
+      return;
+    }
+    const { overlay } = legend;
+    if (overlay.id === "score") {
+      el.innerHTML = `<div class="legend-title">Your criteria</div>
+        <div class="legend-keys">${["green", "yellow", "red"]
+          .map((k) => `<span><i style="background:${COLORS[k]}"></i>${COLOR_LABELS[k]}</span>`)
+          .join("")}</div>`;
+    } else {
+      const metric = metricByKey(overlay.metric);
+      el.innerHTML = `<div class="legend-title">${esc(overlay.label)} <span class="muted">· ${esc(overlay.source)}</span></div>
+        <div class="legend-ramp" style="background:linear-gradient(90deg,${overlay.ramp.join(",")})"></div>
+        <div class="legend-scale"><span>${legend.count ? esc(formatValue(metric, legend.min)) : "—"}</span><span>${legend.count ? esc(formatValue(metric, legend.max)) : "—"}</span></div>`;
+    }
+    el.hidden = false;
+  }
+
+  function tooltipHtml(a) {
+    const overlay = overlayById(prefs.mode);
+    let detail = "";
+    if (overlay.metric) {
+      detail = `${esc(overlay.short)}: <b>${esc(formatValue(metricByKey(overlay.metric), a.metrics?.[overlay.metric]))}</b>`;
+    } else {
       const r = results.get(a.geoid);
-      return `${esc(a.name)}${r?.score != null ? ` · ${r.score}` : ""}`;
-    }, { sticky: true });
-    a.shape.addTo(layer);
+      detail = r?.score != null ? `Score <b>${r.score}</b>` : esc(COLOR_LABELS[r?.color || "pending"]);
+    }
+    const where = [a.metrics?.zip, a.metrics?.city].filter(Boolean).map(esc).join(" · ");
+    return `<div class="tip-name">${esc(a.name)}</div><div>${detail}</div>${where ? `<div class="muted">${where}</div>` : ""}`;
   }
 
-  function restyleAll() {
-    for (const a of areas.values()) a.shape?.setStyle(styleFor(a.geoid));
+  const raw = map.raw;
+  raw.on("mousemove", "areas-fill", (e) => {
+    const id = e.features?.[0]?.properties?.geoid;
+    if (!id || !context) return;
+    if (hovered.id !== id) {
+      if (hovered.id) areaLayer.setFeatureState(hovered.id, { hover: false });
+      hovered.id = id;
+      areaLayer.setFeatureState(id, { hover: true });
+    }
+    raw.getCanvas().style.cursor = "pointer";
+    const a = areas.get(id);
+    if (a && matchMedia("(hover: hover)").matches) tip.setLngLat(e.lngLat).setHTML(tooltipHtml(a)).addTo(raw);
+  });
+  raw.on("mouseleave", "areas-fill", () => {
+    if (hovered.id) areaLayer.setFeatureState(hovered.id, { hover: false });
+    hovered.id = null;
+    raw.getCanvas().style.cursor = "";
+    tip.remove();
+  });
+  raw.on("click", "areas-fill", (e) => {
+    const id = e.features?.[0]?.properties?.geoid;
+    const a = id && areas.get(id);
+    if (!a || !context) return;
+    if (context === "explore") return openArea(id);
+    if (document.body.classList.contains("drive-active") && document.querySelector("#draw-btn")?.getAttribute("aria-pressed") === "true") return;
+    new map.maplibregl.Popup({ maxWidth: "260px", className: "gz-card" })
+      .setLngLat(e.lngLat)
+      .setHTML(`${tooltipHtml(a)}<a class="tip-link" href="#/explore">Open in Explore</a>`)
+      .addTo(raw);
+  });
+
+  function ensureNight() {
+    if (nightLayer || !prefs.night) return;
+    const tiles = dataStatus?.nightLights?.url || DEFAULT_NIGHT_TILES;
+    nightLayer = map.source(
+      "night-lights",
+      { type: "raster", tiles: [tiles], tileSize: 256, maxzoom: dataStatus?.nightLights?.zoom || 8, attribution: "Night lights: NASA Black Marble (GIBS)" },
+      [{ id: "night-lights", type: "raster", paint: { "raster-opacity": 0.85, "raster-fade-duration": 200 } }],
+      { z: 10 },
+    );
+  }
+
+  function ensureFlood() {
+    // The tile URL comes from the server, so wait for the data status.
+    if (floodLayer || !prefs.flood || !dataStatus?.floodTiles) return;
+    floodLayer = map.source(
+      "flood-zones",
+      { type: "raster", tiles: [dataStatus.floodTiles], tileSize: 256, minzoom: 11, attribution: "Flood zones: FEMA NFHL" },
+      [{ id: "flood-zones", type: "raster", paint: { "raster-opacity": 0.6, "raster-fade-duration": 200 } }],
+      { z: 12 },
+    );
+  }
+
+  function applyLayers() {
+    const showAreas = !!context && prefs.mode !== "off";
+    areaLayer.setVisible(showAreas);
+    ensureNight();
+    nightLayer?.setVisible(prefs.night && mapContext !== null);
+    ensureFlood();
+    floodLayer?.setVisible(prefs.flood && mapContext !== null);
+    if (showAreas) paint();
+    else renderLegend();
+    if (!showAreas) tip.remove();
   }
 
   function rescore() {
     results = scoreAreas(visibleAreas(), criteria, settings);
-    restyleAll();
+    paint();
     renderStatus();
     renderSummary();
     if (selected && context === "explore") renderArea();
@@ -235,6 +411,7 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
         <input id="ex-place" type="search" placeholder="Find a city, ZIP or address" aria-label="Find a place" autocomplete="off">
         <button class="btn btn-ghost" type="submit">Go</button>
         <button class="btn btn-ghost" type="button" id="ex-locate" title="Go to my location">◎</button>
+        <div class="ex-suggest" id="ex-suggest" role="listbox" hidden></div>
       </form>
       <p class="stat-line" id="ex-status"></p>
       <div class="ex-counts" id="ex-counts"></div>
@@ -385,17 +562,23 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
     const zillow = dataStatus?.zillow || [];
     const loaded = zillow.filter((d) => d.importedAt);
     const failed = zillow.filter((d) => d.error && !d.importedAt);
+    const rate = dataStatus?.mortgageRate;
+    const canLoad = dataStatus?.canLoadMarket && loaded.length < zillow.length;
     return `
       <p><b>Home values and rents</b> come from Zillow Research (ZHVI and ZORI) by ZIP code${
         loaded.length ? `, latest month ${esc(loaded.map((d) => d.month).filter(Boolean).sort().pop() || "")}` : ""
       }. ${loaded.length ? `${loaded.length} of ${zillow.length} Zillow datasets loaded.` : "Zillow data hasn't been imported yet, so Census figures are used instead."}${
         failed.length ? ` <span class="ex-notice">Import problem: ${esc(failed[0].label)}: ${esc(failed[0].error)}</span>` : ""
       }</p>
-      <p><b>Housing and economy</b> come from the Census American Community Survey 5-year estimates for each tract. Only housing, market and economic figures are used. Nothing about race, ethnicity, religion, sex, family status or disability goes into a score.</p>
-      <p><b>Outdoors, lighting, amenities and land use</b> come from OpenStreetMap. That data is crowd-mapped, so coverage varies by city. "Outdoor activity" counts parks, trails and fitness spots; it is not Strava data, whose terms don't allow sharing it across users.</p>
+      ${canLoad ? `<p><button class="btn btn-ghost" type="button" data-market-load>Load Zillow data now</button> <span class="muted small" id="market-load-status">Takes a minute or two.</span></p>` : ""}
+      <p><b>Mortgage payments</b> use Freddie Mac's 30-year fixed rate from FRED${rate?.rate ? ` (${esc(rate.rate)}% on ${esc(rate.date)})` : ""}, with 20% down, before taxes and insurance.</p>
+      <p><b>Housing, economy and commuting</b> come from the Census American Community Survey 5-year estimates for each tract. Only housing, market, commuting and economic figures are used. Nothing about race, ethnicity, religion, sex, family status or disability goes into a score.</p>
+      <p><b>Flood zones</b> come from FEMA's National Flood Hazard Layer: the share of each tract in a 1%-a-year (100-year) flood zone, where lenders usually require flood insurance.</p>
+      <p><b>Active adults</b> come from CDC PLACES, a model-based estimate of adults who got physical activity outside work in the past month. <b>Night brightness</b> comes from NASA Black Marble satellite imagery; in dense city centers it tops out, so street lighting from OpenStreetMap tells those areas apart better.</p>
+      <p><b>Outdoors, lighting, amenities and land use</b> come from OpenStreetMap. That data is crowd-mapped, so coverage varies by city.</p>
       <p><b>Zoning:</b> there's no free nationwide zoning dataset. "Main land use" is what's mapped on the ground, not the legal zoning. Check the city or county zoning map before you buy.</p>
       <p><b>Crime</b> isn't included; there's no reliable nationwide source by neighborhood. Your own drive ratings can stand in for what you see.</p>
-      <p class="muted small">Home value and rent data © Zillow, Inc., Zillow Research. Map data © OpenStreetMap contributors. Census Bureau data.</p>`;
+      <p class="muted small">Home value and rent data © Zillow, Inc., Zillow Research. Map data © OpenStreetMap contributors. Census Bureau, CDC, FEMA, NASA and Federal Reserve Bank of St. Louis (FRED) data.${dataStatus?.rentcast ? " Market snapshots by RentCast." : ""}</p>`;
   }
 
   function renderArea() {
@@ -429,8 +612,9 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
           .join(", ")}</p>`
       : "";
     const missing = (m.missing || []).length
-      ? `<p class="ex-notice">Still loading: ${esc(m.missing.join(", "))}. It will retry automatically.</p>`
+      ? `<p class="ex-notice">Still loading: ${esc(m.missing.map((k) => SOURCE_NAMES[k] || k).join(", "))}. It will retry automatically.</p>`
       : "";
+    const rate = dataStatus?.mortgageRate;
     body().innerHTML = `
       <button class="btn btn-link ex-back" type="button" id="ex-back">← Back to results</button>
       <h2>${esc(a.name)}</h2>
@@ -440,16 +624,46 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
       ${missing}
       <h3>How it scores</h3>
       ${parts ? `<ul class="score-parts">${parts}</ul>` : `<p class="muted">No criteria are switched on.</p>`}
+      ${dataStatus?.rentcast && m.zip ? `<div id="ex-market" class="ex-market"><h3>Market now · ZIP ${esc(m.zip)}</h3><p class="muted small">Loading listings…</p></div>` : ""}
       ${groups}
       ${mix}
-      <p class="muted small">Census ${esc(m.acsYear || "")} 5-year estimates${m.zillowMonth ? ` · Zillow ${esc(m.zillowMonth)}` : ""} · OpenStreetMap. Home value and rent data © Zillow, Inc.</p>`;
+      <p class="muted small">Census ${esc(m.acsYear || "")} 5-year estimates${m.zillowMonth ? ` · Zillow ${esc(m.zillowMonth)}` : ""}${
+        rate?.rate ? ` · Mortgage payment at ${esc(rate.rate)}% (FRED, ${esc(rate.date)}), 20% down` : ""
+      } · OpenStreetMap. Home value and rent data © Zillow, Inc.</p>`;
+    if (dataStatus?.rentcast && m.zip) loadMarketSnapshot(m.zip);
+  }
+
+  const snapshots = new Map();
+  async function loadMarketSnapshot(zip) {
+    const el = () => document.querySelector("#ex-market");
+    try {
+      if (!snapshots.has(zip)) snapshots.set(zip, (await api(`/api/areas/market/${zip}`)).snapshot);
+    } catch (err) {
+      if (el()) el().innerHTML = `<h3>Market now · ZIP ${esc(zip)}</h3><p class="muted small">${esc(err.message)}</p>`;
+      return;
+    }
+    const s = snapshots.get(zip);
+    if (!el() || areas.get(selected)?.metrics?.zip !== zip) return;
+    const usd = (v) => formatValue({ fmt: "usd" }, v);
+    const n = (v, unit = "") => (v == null ? "—" : `${Math.round(v).toLocaleString()}${unit}`);
+    el().innerHTML = `<h3>Market now · ZIP ${esc(zip)}</h3>
+      <table class="area-table">
+        <tr><th>Homes for sale</th><td>${esc(n(s.sale?.listings))}${s.sale?.newListings ? ` <span class="muted small">(${esc(n(s.sale.newListings))} new)</span>` : ""}</td></tr>
+        <tr><th>Median list price</th><td>${esc(usd(s.sale?.medianPrice))}</td></tr>
+        <tr><th>Median price per sq ft</th><td>${esc(usd(s.sale?.medianPricePerSqft))}</td></tr>
+        <tr><th>Median days on market (sale)</th><td>${esc(n(s.sale?.medianDaysOnMarket, " days"))}</td></tr>
+        <tr><th>Rentals listed</th><td>${esc(n(s.rent?.listings))}</td></tr>
+        <tr><th>Median asking rent</th><td>${esc(s.rent?.medianRent == null ? "—" : `${usd(s.rent.medianRent)}/mo`)}</td></tr>
+        <tr><th>Median days on market (rent)</th><td>${esc(n(s.rent?.medianDaysOnMarket, " days"))}</td></tr>
+      </table>
+      <p class="muted small">Listings data by RentCast${s.updated ? `, updated ${esc(s.updated)}` : ""}.</p>`;
   }
 
   function openArea(geoid) {
     const prev = selected;
     selected = geoid;
-    if (prev) areas.get(prev)?.shape?.setStyle(styleFor(prev));
-    areas.get(geoid)?.shape?.setStyle(styleFor(geoid));
+    if (prev) areaLayer.setFeatureState(prev, { selected: false });
+    areaLayer.setFeatureState(geoid, { selected: true });
     $("#view-panel")?.classList.remove("collapsed");
     renderPanel();
     body().scrollTop = 0;
@@ -537,16 +751,18 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
       rescore();
     } else if (t.dataset.area) {
       const a = areas.get(t.dataset.area);
-      if (a?.shape) map.fitBounds(a.shape.getBounds(), { maxZoom: 15, padding: [30, 30] });
+      if (a?.bounds) map.fitBounds(a.bounds, { maxZoom: 15, minZoom: MIN_ZOOM, padding: getPadding() });
       openArea(t.dataset.area);
     } else if (t.dataset.goto) {
       const [lat, lng] = t.dataset.goto.split(",").map(Number);
-      map.setView([lat, lng], Math.max(map.getZoom(), 14));
+      map.flyTo([lat, lng], Math.max(map.getZoom(), 14));
       if (areas.has(t.dataset.geoid)) openArea(t.dataset.geoid);
+    } else if (t.dataset.marketLoad !== undefined) {
+      await loadMarketData(t);
     } else if (t.id === "ex-back") {
       const prev = selected;
       selected = null;
-      areas.get(prev)?.shape?.setStyle(styleFor(prev));
+      if (prev) areaLayer.setFeatureState(prev, { selected: false });
       renderPanel();
     } else if (t.id === "ex-locate") {
       locate();
@@ -572,20 +788,84 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
     }
   });
 
+  /* ---------- place search with suggestions (Photon, OpenStreetMap data) ---------- */
+
+  let suggestions = [];
+  let suggestTimer = null;
+  let suggestSeq = 0;
+
+  function placeLabel(p) {
+    const parts = [p.name, p.street && p.housenumber ? `${p.housenumber} ${p.street}` : p.street, p.city, p.state, p.postcode];
+    return [...new Set(parts.filter(Boolean))].join(", ");
+  }
+
+  async function fetchSuggestions(q) {
+    const c = map.getCenter();
+    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=6&lang=en&lat=${c.lat.toFixed(3)}&lon=${c.lng.toFixed(3)}&bbox=-170,15,-60,72`;
+    const res = await fetch(url, { headers: { accept: "application/json" } });
+    const data = await res.json();
+    return (data.features || []).filter((f) => !f.properties?.countrycode || f.properties.countrycode === "US");
+  }
+
+  function renderSuggestions() {
+    const box = $("#ex-suggest");
+    if (!box) return;
+    box.hidden = !suggestions.length;
+    box.innerHTML = suggestions
+      .map((f, i) => `<button type="button" role="option" data-suggest="${i}"><b>${esc(f.properties.name || placeLabel(f.properties))}</b><span>${esc(placeLabel({ ...f.properties, name: "" }))}</span></button>`)
+      .join("");
+  }
+
+  function goToPlace(f) {
+    const ext = f.properties?.extent;
+    const [lng, lat] = f.geometry.coordinates;
+    suggestions = [];
+    renderSuggestions();
+    $("#ex-place").value = placeLabel(f.properties);
+    if (ext && ext.length === 4) map.fitBounds({ w: ext[0], n: ext[1], e: ext[2], s: ext[3] }, { maxZoom: 15, minZoom: MIN_ZOOM, padding: getPadding() });
+    else map.flyTo([lat, lng], 15);
+  }
+
+  document.addEventListener("input", (e) => {
+    if (e.target.id !== "ex-place") return;
+    clearTimeout(suggestTimer);
+    const q = e.target.value.trim();
+    if (q.length < 3) {
+      suggestions = [];
+      return renderSuggestions();
+    }
+    suggestTimer = setTimeout(async () => {
+      const seq = ++suggestSeq;
+      try {
+        const found = await fetchSuggestions(q);
+        if (seq === suggestSeq) {
+          suggestions = found;
+          renderSuggestions();
+        }
+      } catch {
+        /* suggestions are best-effort */
+      }
+    }, 250);
+  });
+
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-suggest]");
+    if (b) goToPlace(suggestions[Number(b.dataset.suggest)]);
+    else if (!e.composedPath().some((n) => n.classList?.contains("ex-find"))) {
+      suggestions = [];
+      renderSuggestions();
+    }
+  });
+
   document.addEventListener("submit", async (e) => {
     if (e.target.id !== "ex-find") return;
     e.preventDefault();
     const q = $("#ex-place").value.trim();
     if (!q) return;
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=us&q=${encodeURIComponent(q)}`, {
-        headers: { accept: "application/json" },
-      });
-      const [hit] = await res.json();
+      const [hit] = suggestions.length ? suggestions : await fetchSuggestions(q);
       if (!hit) return toast("Couldn't find that place");
-      const [s, n, w, ee] = hit.boundingbox.map(Number);
-      map.fitBounds([[s, w], [n, ee]], { maxZoom: 14 });
-      if (map.getZoom() < MIN_ZOOM) map.setZoom(MIN_ZOOM);
+      goToPlace(hit);
     } catch {
       toast("Place search is unavailable right now");
     }
@@ -593,10 +873,10 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
 
   function locate() {
     const fix = getLastFix?.();
-    if (fix && Date.now() - fix.t < 5 * 60 * 1000) return map.setView([fix.lat, fix.lng], 14);
+    if (fix && Date.now() - fix.t < 5 * 60 * 1000) return map.flyTo([fix.lat, fix.lng], 14);
     if (!navigator.geolocation) return toast("Location isn't available on this device");
     navigator.geolocation.getCurrentPosition(
-      (pos) => map.setView([pos.coords.latitude, pos.coords.longitude], 14),
+      (pos) => map.flyTo([pos.coords.latitude, pos.coords.longitude], 14),
       () => toast("Couldn't get your location"),
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 },
     );
@@ -713,7 +993,7 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
       settings = { ...DEFAULT_SETTINGS, ...(s.criteria?.settings || {}) };
       savePrefs();
       selected = null;
-      if (s.view?.bounds) map.fitBounds(s.view.bounds);
+      if (s.view?.bounds) map.fitBounds(s.view.bounds, { padding: 10, maxZoom: 18 });
       renderPanel();
       rescore();
     } catch (err) {
@@ -723,6 +1003,31 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
   }
 
   /* ---------- context switching ---------- */
+
+  /** Imports Zillow datasets one at a time, for preview versions that have no daily job. */
+  async function loadMarketData(btn) {
+    btn.disabled = true;
+    const status = () => $("#market-load-status");
+    try {
+      for (let i = 0; i < 12; i++) {
+        btn.textContent = "Loading Zillow data…";
+        const { result, busy, remaining } = await api("/api/areas/market-load", { method: "POST" });
+        if (result && !result.ok) throw new Error(`${result.dataset}: ${result.error}`);
+        if (status()) status().textContent = remaining.length ? `${remaining.length} datasets to go…` : "Done.";
+        if (!remaining.length) break;
+        if (busy && !result) {
+          if (status()) status().textContent = "Another import is running. Check back in a few minutes.";
+          break;
+        }
+      }
+      await refreshDataStatus();
+      load(true);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Try again";
+      if (status()) status().textContent = err.message;
+    }
+  }
 
   async function refreshDataStatus() {
     try {
@@ -734,36 +1039,142 @@ export function createExplore({ map, api, esc, toast, openUpgrade, getZones, get
     }
   }
 
-  /** ctx: "explore" (full view), "drive" (faint overlay if switched on) or null (hidden). */
-  function setContext(ctx, searchId = null) {
-    const next = ctx === "explore" ? "explore" : ctx === "drive" && prefs.overlay ? "drive" : null;
+  /* ---------- Layers panel (base map, area colors, night lights, 3D) ---------- */
+
+  function renderLayersPanel() {
+    const el = $("#layers-panel");
+    if (!el || el.hidden) return;
+    const bases = Object.entries(BASE_STYLES)
+      .map(
+        ([key, b]) => `<button type="button" class="lp-base lp-base-${key}${map.base === key ? " active" : ""}" data-base="${key}" aria-pressed="${map.base === key}">
+          <span class="lp-thumb"></span>${esc(b.label)}</button>`,
+      )
+      .join("");
+    const modes = OVERLAYS.map((o) => {
+      const swatch = o.ramp
+        ? `<span class="lp-ramp" style="background:linear-gradient(90deg,${o.ramp.join(",")})"></span>`
+        : o.id === "score"
+          ? `<span class="lp-ramp" style="background:linear-gradient(90deg,${COLORS.red},${COLORS.yellow},${COLORS.green})"></span>`
+          : `<span class="lp-ramp lp-off"></span>`;
+      return `<button type="button" class="lp-mode${prefs.mode === o.id ? " active" : ""}" data-mode="${o.id}" aria-pressed="${prefs.mode === o.id}">
+        ${swatch}<span>${esc(o.label)}${o.source ? `<small>${esc(o.source)}</small>` : o.help ? `<small>${esc(o.help)}</small>` : ""}</span></button>`;
+    }).join("");
+    el.innerHTML = `
+      <div class="lp-head"><b>Map layers</b><button type="button" class="lp-close" data-lp-close aria-label="Close">×</button></div>
+      <div class="lp-section">Map type</div>
+      <div class="lp-bases">${bases}</div>
+      <div class="lp-section">Color neighborhoods by</div>
+      <div class="lp-modes">${modes}</div>
+      <label class="check lp-check"><input type="checkbox" data-lp="everywhere" ${prefs.everywhere ? "checked" : ""}> Also show on Drive, Trips and My map</label>
+      <label class="lp-range">Color strength <input type="range" min="0.15" max="0.8" step="0.05" value="${prefs.opacity}" data-lp="opacity"></label>
+      <div class="lp-section">Overlays</div>
+      <label class="check lp-check"><input type="checkbox" data-lp="night" ${prefs.night ? "checked" : ""}> Night lights from space <small>NASA Black Marble</small></label>
+      <label class="check lp-check"><input type="checkbox" data-lp="flood" ${prefs.flood ? "checked" : ""}> Flood zones <small>FEMA, 100-year floodplain · zoom in to see</small></label>
+      <button type="button" class="btn btn-ghost lp-3d" data-lp-3d aria-pressed="${map.threeD}">${map.threeD ? "Flat view" : "3D view"}</button>
+      <p class="muted small lp-hint">Drag with two fingers (or right-click drag) to tilt and rotate.</p>`;
+  }
+
+  function toggleLayersPanel(force) {
+    const el = $("#layers-panel");
+    el.hidden = force === undefined ? !el.hidden : !force;
+    $("#layers-btn")?.setAttribute("aria-expanded", String(!el.hidden));
+    renderLayersPanel();
+  }
+
+  $("#layers-btn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleLayersPanel();
+  });
+  $("#threed-btn")?.addEventListener("click", () => {
+    map.set3D(!map.threeD);
+    $("#threed-btn").setAttribute("aria-pressed", String(map.threeD));
+    renderLayersPanel();
+  });
+
+  $("#layers-panel")?.addEventListener("click", (e) => {
+    const t = e.target.closest("button");
+    if (!t) return;
+    if (t.dataset.lpClose !== undefined) return toggleLayersPanel(false);
+    if (t.dataset.base) {
+      map.setBase(t.dataset.base);
+      try {
+        localStorage.setItem("gz_base", t.dataset.base);
+      } catch {
+        /* not critical */
+      }
+    } else if (t.dataset.mode) {
+      prefs.mode = t.dataset.mode;
+      if (mapContext && mapContext !== "explore" && prefs.mode !== "off") prefs.everywhere = true;
+      savePrefs();
+      setContext(mapContext, null, true);
+    } else if (t.dataset.lp3d !== undefined) {
+      map.set3D(!map.threeD);
+      $("#threed-btn")?.setAttribute("aria-pressed", String(map.threeD));
+    }
+    renderLayersPanel();
+  });
+
+  $("#layers-panel")?.addEventListener("input", (e) => {
+    const key = e.target.dataset.lp;
+    if (key === "opacity") {
+      prefs.opacity = Number(e.target.value);
+      paint();
+    } else if (key === "night") {
+      prefs.night = e.target.checked;
+      applyLayers();
+    } else if (key === "flood") {
+      prefs.flood = e.target.checked;
+      if (prefs.flood && !dataStatus) refreshDataStatus().then(applyLayers);
+      applyLayers();
+    } else if (key === "everywhere") {
+      prefs.everywhere = e.target.checked;
+      setContext(mapContext, null, true);
+    }
+    savePrefs();
+  });
+
+  document.addEventListener("click", (e) => {
+    const el = $("#layers-panel");
+    // composedPath() still lists the panel when the clicked button was re-rendered away.
+    if (el && !el.hidden && !e.composedPath().includes(el) && !e.target.closest("#layers-btn")) toggleLayersPanel(false);
+  });
+
+  map.on("style", () => {
+    // A new base style starts without feature-state, so re-apply hover/selection colors.
+    if (context) paint();
+  });
+
+  /* ---------- context switching ---------- */
+
+  let mapContext = null;
+
+  /**
+   * ctx: "explore" (full view), "drive" or "view" (trip / My map: area colors only if switched on
+   * everywhere), or null (a page covers the map).
+   */
+  function setContext(ctx, searchId = null, keepSearch = false) {
+    mapContext = ctx;
+    const next = ctx === "explore" ? "explore" : (ctx === "drive" || ctx === "view") && prefs.everywhere ? "passive" : null;
     const entering = next === "explore" && context !== "explore";
     context = next;
-    pane.classList.toggle("areas-passive", context === "drive");
-    if (!context) {
-      map.removeLayer(layer);
-      return;
-    }
-    map.addLayer(layer);
-    restyleAll();
-    if (context === "explore") {
+    $("#map-fabs").hidden = !ctx;
+    if (!ctx) toggleLayersPanel(false);
+    if (context === "explore" && !keepSearch) {
       if (searchId && searchId !== search?.id) openSearch(searchId);
       else if (!searchId && search) search = null;
       if (entering) {
         refreshSearches();
-        refreshDataStatus();
+        refreshDataStatus().then(applyLayers);
         segments = null;
       }
       renderPanel();
+    } else if (ctx && !dataStatus) refreshDataStatus().then(applyLayers);
+    applyLayers();
+    if (context) {
+      load();
+      rescore();
     }
-    load();
   }
 
-  function setOverlay(on) {
-    prefs.overlay = on;
-    savePrefs();
-    setContext("drive");
-  }
-
-  return { setContext, setOverlay, overlayOn: () => prefs.overlay };
+  return { setContext };
 }

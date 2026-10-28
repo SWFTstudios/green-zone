@@ -22,7 +22,7 @@ ${bodyHtml}
 </td></tr></table></body></html>`;
 }
 
-async function send(env: Env, to: string, subject: string, html: string, text: string): Promise<void> {
+async function send(env: Env, to: string, subject: string, html: string, text: string, replyTo?: string): Promise<void> {
   // The preview environment deliberately has no email binding.
   if (!env.EMAIL) throw new Error("No EMAIL binding is configured for this environment.");
   await env.EMAIL.send({
@@ -31,11 +31,46 @@ async function send(env: Env, to: string, subject: string, html: string, text: s
     subject,
     html,
     text,
+    ...(replyTo ? { replyTo } : {}),
   });
 }
 
+export interface ReviewEmail {
+  rating: number;
+  message: string;
+  name: string | null;
+  email: string | null;
+  source: string;
+  account: string;
+  createdAt: number;
+}
+
+/** Sends a new review to the team inbox (REVIEW_TO). Replies go to the reviewer when they left an email. */
+export async function sendReview(env: Env, to: string, r: ReviewEmail): Promise<void> {
+  const stars = "★".repeat(r.rating) + "☆".repeat(5 - r.rating);
+  const who = r.name || "Someone";
+  const rows: [string, string][] = [
+    ["Rating", `${stars} (${r.rating} of 5)`],
+    ["From", `${r.name || "No name given"}${r.email ? ` <${r.email}>` : ""}`],
+    ["Left on", r.source === "app" ? "The app" : "The landing page"],
+    ["Account", r.account],
+    ["When", new Date(r.createdAt).toUTCString()],
+  ];
+  const html = layout(
+    env,
+    `New review: ${stars}`,
+    `<p style="margin:0 0 16px;font-size:16px;line-height:1.55;white-space:pre-wrap">${escapeHtml(r.message)}</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="font-size:14px;color:#374151">
+${rows.map(([k, v]) => `<tr><td style="padding:4px 16px 4px 0;color:#6b7280">${k}</td><td style="padding:4px 0">${escapeHtml(v)}</td></tr>`).join("\n")}
+</table>
+${r.email ? `<p style="font-size:13px;color:#6b7280;margin:16px 0 0">Reply to this email to answer ${escapeHtml(who)} directly.</p>` : ""}`,
+  );
+  const text = `${stars} (${r.rating} of 5)\n\n${r.message}\n\n${rows.map(([k, v]) => `${k}: ${v}`).join("\n")}`;
+  await send(env, to, `${stars} New ${env.APP_NAME} review from ${who}`, html, text, r.email || undefined);
+}
+
 export async function sendLoginCode(env: Env, to: string, code: string, origin: string): Promise<void> {
-  const link = `${origin}/#/verify?email=${encodeURIComponent(to)}&code=${code}`;
+  const link = `${origin}/app#/verify?email=${encodeURIComponent(to)}&code=${code}`;
   const html = layout(
     env,
     "Your sign-in code",
@@ -59,10 +94,10 @@ export async function sendWelcome(env: Env, to: string, origin: string): Promise
 <li>Tap a different color whenever the neighborhood changes, or <b>Pause</b> to stop painting.</li>
 <li>Tap <b>Finish</b> to name the trip, write notes and fill in the key.</li>
 </ol>
-<p style="margin:0 0 24px"><a href="${escapeHtml(origin)}" style="background:#16a34a;color:#ffffff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Open ${escapeHtml(env.APP_NAME)}</a></p>
+<p style="margin:0 0 24px"><a href="${escapeHtml(origin)}/app" style="background:#16a34a;color:#ffffff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Open ${escapeHtml(env.APP_NAME)}</a></p>
 <p style="font-size:13px;color:#6b7280;margin:0">Safety first: let a passenger tap the buttons, or pull over before you do.</p>`,
   );
-  const text = `Welcome to ${env.APP_NAME}!\n\n1. Tap Start drive and allow location.\n2. Tap Green, Yellow or Red. The street you're on is painted that color as you drive.\n3. Switch colors when the neighborhood changes, or Pause to stop painting.\n4. Tap Finish to name the trip, write notes and fill in the key.\n\nOpen the app: ${origin}\n\nSafety first: let a passenger tap the buttons, or pull over before you do.`;
+  const text = `Welcome to ${env.APP_NAME}!\n\n1. Tap Start drive and allow location.\n2. Tap Green, Yellow or Red. The street you're on is painted that color as you drive.\n3. Switch colors when the neighborhood changes, or Pause to stop painting.\n4. Tap Finish to name the trip, write notes and fill in the key.\n\nOpen the app: ${origin}/app\n\nSafety first: let a passenger tap the buttons, or pull over before you do.`;
   await send(env, to, `Welcome to ${env.APP_NAME}`, html, text);
 }
 
@@ -80,7 +115,7 @@ export async function sendTripSummary(
   pinCount: number,
 ): Promise<void> {
   const minutes = Math.max(1, Math.round((trip.endedAt - trip.startedAt) / 60000));
-  const link = `${origin}/#/trips/${trip.id}`;
+  const link = `${origin}/app#/trips/${trip.id}`;
   const rows = legend
     .map((entry) => {
       const meters = metersByZone.get(entry.zoneTypeId) || 0;
